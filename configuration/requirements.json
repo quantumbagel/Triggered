@@ -1,0 +1,40 @@
+{"triggers": {
+  "contains-text": {
+    "params": {
+      "text_or_word": {
+        "required": true
+      }
+    },
+    "class": "ContainsTextTrigger",
+    "type": "send_msg"
+  },
+  "contains-word": {
+    "params": {
+      "text_or_word": {
+        "required": true
+      }
+    },
+    "class": "ContainsWordTrigger",
+    "type": "send_msg"
+  },
+  "role-mentioned": {
+    "params": {
+      "role": {
+        "required": true
+      }
+    },
+    "class": "RoleMentionedTrigger",
+    "type": "send_msg"
+  }
+},
+  "do": {
+    "send-dm": {
+        "params":
+            {"member": {"required": true}},
+        "class": "SendDMDo"
+    }, "send-message": {
+      "params": {"channel": {"required":  true}
+      }, "class": "SendMessageDo"
+    }
+  }
+}

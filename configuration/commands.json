@@ -1,0 +1,21 @@
+{
+  "927616485378129930": {
+    "contains-text[text_or_word:a]": {
+      "trigger_var": {
+        "trigger_role": null,
+        "trigger_member": null,
+        "trigger_text_or_word": "a"
+      },
+      "do_var": [
+        {
+          "do_member": null,
+          "do_channel": [
+            "channel",
+            1166523939401502810
+          ],
+          "do_action_name": "send-message"
+        }
+      ]
+    }
+  }
+}
