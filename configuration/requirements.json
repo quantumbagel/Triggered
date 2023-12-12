@@ -25,6 +25,42 @@
     },
     "class": "RoleMentionedTrigger",
     "type": "send_msg"
+  },
+  "reaction-added": {
+    "params": {
+      "emoji": {
+        "required": true
+      }
+    },
+    "class": "ReactionAddedTrigger",
+    "type": "reaction_add"
+  },
+  "reaction-removed": {
+    "params": {
+      "emoji": {
+        "required": true
+      }
+    },
+    "class": "ReactionRemovedTrigger",
+    "type": "reaction_remove"
+  },
+  "join-vc": {
+    "params": {
+      "vc": {
+        "required": true
+      }
+    },
+    "class": "JoinedVCTrigger",
+    "type": "vc_join"
+  },
+  "left-vc": {
+    "params": {
+      "vc": {
+        "required": true
+      }
+    },
+    "class": "LeftVCTrigger",
+    "type": "vc_leave"
   }
 },
   "do": {

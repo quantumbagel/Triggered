@@ -1,5 +1,4 @@
 import abc
-
 import discord
 
 
@@ -22,7 +21,7 @@ class Trigger(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def dropdown_name(self):
+    def dropdown_name(self):
         """
         Return a formatted name for the bot's choices (e.x. Contains Text)
         :return: the formatted name

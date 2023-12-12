@@ -8,7 +8,7 @@ class SendDMDo(Do.Do):
     async def human(variables: dict, trigger_id: str):
         return f"Sent DM to {variables['do_member'].name} (@{variables['do_member'].global_name})."
 
-    async def execute(variables: dict, full_var: dict, trigger_id: str, client, guild: discord.Guild, author: discord.Member, other_discord_data: discord.Object = None):
+    async def execute(variables: dict, full_var: dict, trigger_id: str, trigger_name: str, client, guild: discord.Guild, author: discord.Member, other_discord_data=None):
         trigger_requirements, do_requirements = GetTriggerDo.get_trigger_do()
         actual_id = trigger_id.split("[")[0]
         embed = discord.Embed(title=f"Rule triggered by {author.global_name} (@{author.name})",
@@ -19,7 +19,7 @@ class SendDMDo(Do.Do):
         embed.add_field(name="Event:",
                         value=await trigger_requirements[actual_id]['class'].human(variables["trigger_var"]))
         embed.add_field(name="Triggered:",
-                        value=SendDMDo.get_trigger_times(trigger_id, author.id, guild.id))
+                        value=await SendDMDo.get_trigger_times(trigger_name, author.id, guild.id))
         actions = ''
         for action in full_var['do_var']:
             actions += (":arrow_right:   " +
@@ -37,10 +37,12 @@ class SendDMDo(Do.Do):
             await thing['do_member'].send(embed=embed)
 
     async def get_trigger_times(iden: str, uid: int, guild_id: int):
-        triggered_tracker = json.load(open('../../configuration/triggered_tracker.json'))
-        identity = triggered_tracker['conversion'][iden]
+        triggered_tracker = json.load(open('configuration/triggered_tracker.json'))
         if (str(guild_id) in triggered_tracker["triggers"].keys() and
-                identity in triggered_tracker["triggers"][str(guild_id)].keys() and
-                str(uid) in triggered_tracker["triggers"][str(guild_id)][identity].keys()):
-            return triggered_tracker["triggers"][str(guild_id)][identity][str(uid)]
+                iden in triggered_tracker["triggers"][str(guild_id)].keys() and
+                str(uid) in triggered_tracker["triggers"][str(guild_id)][iden].keys()):
+            return triggered_tracker["triggers"][str(guild_id)][iden][str(uid)]
         return 0
+
+    def dropdown_name(self):
+        return "Send DM"

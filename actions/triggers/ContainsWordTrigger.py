@@ -9,5 +9,5 @@ class ContainsWordTrigger(Trigger.Trigger):
     async def is_valid(variables: dict, message: discord.Message):
         return variables["trigger_text_or_word"] in message.content.split(' ')
 
-    async def dropdown_name(self):
+    def dropdown_name(self):
         return "Contains Word"

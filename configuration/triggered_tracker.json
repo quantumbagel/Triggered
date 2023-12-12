@@ -1,17 +1,1 @@
-{
-  "conversion": {
-    "927616485378129930": {
-      "a": "contains-text[text_or_word:a]"
-    }
-  },
-  "triggers": {
-    "927616485378129930": {
-      "sync_test": {
-        "897146430664355850": 2
-      },
-      "a": {
-        "897146430664355850": 5
-      }
-    }
-  }
-}
+{"conversion": {"927616485378129930": {"reaction_test": "reaction-added[emoji:\ud83d\udc4d]", "r_test": "reaction-removed[emoji:\ud83d\udc4d]", "vc_join_test_please_work": "join-vc[vc:#thing]", "left_vc_check": "left-vc[vc:#thing]"}}, "triggers": {"927616485378129930": {"reaction_test": {"897146430664355850": 5}, "vc_join_test_please_work": {"897146430664355850": 11, "1085939954758205561": 1}, "left_vc_check": {"897146430664355850": 5, "1085939954758205561": 1}}}, "run": 1702408245.451025}

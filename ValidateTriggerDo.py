@@ -1,6 +1,6 @@
 import importlib
 
-valid_type_names = ['send_msg', 'vc_join', 'vc_leave', 'reaction_add', 'reaction_remove', 'edit_msg', ]
+valid_type_names = ['send_msg', 'vc_join', 'vc_leave', 'reaction_add', 'reaction_remove']
 
 
 def validate(data):
@@ -21,4 +21,3 @@ def validate(data):
         except ImportError:
             return f"Failed to validate (Invalid class at root/do/{item}/class with val={do_req[item]['class']})"
     return ""
-

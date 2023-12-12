@@ -1,81 +1,39 @@
 # Triggered by @quantumbagel
 import json
+import os
 import sys
+import time
 import discord
 from discord import app_commands
 import logging
 import GetTriggerDo
+import MongoInterface
+import ValidateArguments
 import WatchingCommandsUtil
 
-BOT_SECRET = "secret"
-
-
-class TriggeredFormatter(logging.Formatter):
-    grey = "\x1b[38;20m"
-    yellow = "\x1b[33;20m"
-    red = "\x1b[31;20m"
-    bold_red = "\x1b[31;1m"
-    reset = "\x1b[0m"
-    format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)"
-
-    FORMATS = {
-        logging.DEBUG: grey + format + reset,
-        logging.INFO: grey + format + reset,
-        logging.WARNING: yellow + format + reset,
-        logging.ERROR: red + format + reset,
-        logging.CRITICAL: bold_red + format + reset
-    }
-
-    def format(self, record):
-        log_fmt = self.FORMATS.get(record.levelno)
-        formatter = logging.Formatter(log_fmt)
-        return formatter.format(record)
-
-# Prepare logger
-
-
+BOT_SECRET = "MTE4MTMzODEzMzIwNDMwNzk2OA.Gw32DT.B-S6t0fQPD5dNOSlFBYd2TF-nuh2TSQC3Zwj9w"
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger("main")
 
-ch = logging.StreamHandler()
-ch.setLevel(logging.DEBUG)
-
-ch.setFormatter(TriggeredFormatter())
-
-log.addHandler(ch)
-
 
 class Triggered(discord.Client):  # A simple client
-    def __init__(self):
+    def __init__(self, should_sync):
         super().__init__(intents=discord.Intents.all())  # discord.py bug, declare intent to be a bot
         self.synced = False  # sync flag so we don't sync multiple times or hang the bot on reconnects
         self.sync_to = 927616485378129930
+        self.should_sync = should_sync
 
     async def on_ready(self):  # Just sync commands
         global watching_commands
         await self.wait_until_ready()
-        if not self.synced:  # Handle syncing
-            # if input("Should I sync command tree?").lower() == 'y':
-            #     tree.copy_global_to(guild=discord.Object(id=self.sync_to))
-            #     fmt = await tree.sync(guild=discord.Object(id=self.sync_to))
-            # else:
-            #     fmt = 'nothing'
-            fmt = 'lol'
-            self.synced = True
+        if not self.synced and self.should_sync:  # Handle syncing
+            log.info("Update detected, performing sync...")
+            tree.copy_global_to(guild=discord.Object(id=self.sync_to))
+            await tree.sync(guild=discord.Object(id=self.sync_to))
+        if not self.synced:
             watching_commands = await watching_commands  # prepare the commands
-            log.info("Commands synced: " + str(fmt))
-        log.info("Logged into discord!")
-
-
-TRIGGER_OPTIONS = [
-    app_commands.Choice(name="Contains Text", value="contains-text"),
-    app_commands.Choice(name="Contains Word", value="contains-word"),
-    app_commands.Choice(name="Role Mentioned", value="role-mentioned"),
-]
-DO_OPTIONS = [
-    app_commands.Choice(name="Send DM", value="send-dm"),
-    app_commands.Choice(name="Send Message", value="send-message"),
-]
+        self.synced = True
+        log.info("(re)Logged into discord!")
 
 
 async def stringify(input_value):
@@ -85,6 +43,10 @@ async def stringify(input_value):
         return "@" + input_value.global_name
     elif type(input_value) is list:
         return None
+    elif type(input_value) is discord.TextChannel:
+        return "#" + input_value.name
+    elif type(input_value) is discord.VoiceChannel:
+        return "#" + input_value.name
     return input_value
 
 
@@ -102,18 +64,38 @@ async def id_gen(variables: dict, trigger_id: str):
 
 
 TRIGGER_REQUIREMENTS, DO_REQUIREMENTS = GetTriggerDo.get_trigger_do()
-if DO_REQUIREMENTS is None:
+if DO_REQUIREMENTS is None:  # Error has occurred, print and exit
     log.error(f"Invalid data ({TRIGGER_REQUIREMENTS})")
     sys.exit(1)
 log.info("Loaded trigger/do requirements")
-client = Triggered()
-watching_commands = WatchingCommandsUtil.get_watching_commands(client)
-tree = app_commands.CommandTree(client)  # Build command tree
-triggered_tracker = json.load(open('configuration/triggered_tracker.json'))
-
+try:
+    triggered_tracker = json.load(open('configuration/triggered_tracker.json'))
+except json.JSONDecodeError:
+    log.error("Failed to load triggered_tracker!")
+    triggered_tracker = {}
 if triggered_tracker == {}:
     log.info("No data, filling with base")
     triggered_tracker = {"conversion": {}, "triggers": {}}
+    triggered_tracker.update({'run': time.time()})
+TRIGGER_OPTIONS = []
+for defined_trigger in TRIGGER_REQUIREMENTS.keys():
+    dropdown_key = TRIGGER_REQUIREMENTS[defined_trigger]['class']().dropdown_name()
+    TRIGGER_OPTIONS.append(app_commands.Choice(name=dropdown_key, value=defined_trigger))
+DO_OPTIONS = []
+for defined_do in DO_REQUIREMENTS.keys():
+    dropdown_key = DO_REQUIREMENTS[defined_do]['class']().dropdown_name()
+    DO_OPTIONS.append(app_commands.Choice(name=dropdown_key, value=defined_do))
+print(os.path.getmtime('configuration/requirements.json'), triggered_tracker['run'])
+if os.path.getmtime('configuration/requirements.json') > triggered_tracker['run']:
+    sync_update = True
+else:
+    sync_update = False
+print(sync_update)
+client = Triggered(sync_update)
+triggered_tracker.update({'run': time.time()})
+json.dump(triggered_tracker, open('configuration/triggered_tracker.json', 'w'))
+watching_commands = WatchingCommandsUtil.get_watching_commands(client)
+tree = app_commands.CommandTree(client)  # Build command tree
 
 triggered = app_commands.Group(name="triggered", description="The heart and soul of the game.")  # The /triggered group
 # I don't think that description is visible anywhere, but maybe it is lol.
@@ -122,12 +104,22 @@ triggered = app_commands.Group(name="triggered", description="The heart and soul
 @triggered.command(name="new", description="Create a trigger")
 @app_commands.choices(trigger=TRIGGER_OPTIONS)
 async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[str], trigger_role: discord.Role = None,
-              trigger_member: discord.Member = None, trigger_text_or_word: str = None):
+              trigger_member: discord.Member = None, trigger_text_or_word: str = None, trigger_emoji: str = None,
+              trigger_vc: discord.VoiceChannel = None):
     variables = {"trigger_role": trigger_role, "trigger_member": trigger_member,
-                 "trigger_text_or_word": trigger_text_or_word}
+                 "trigger_text_or_word": trigger_text_or_word, "trigger_emoji": trigger_emoji, "trigger_vc": trigger_vc}
+    allowed, res = ValidateArguments.is_trigger_valid(variables, trigger.value, TRIGGER_REQUIREMENTS)
+    if not allowed:
+        log.error(f"Failed to validate TRIGGER action (reason=\"{res}\")")
+        await ctx.response.send_message(content=f"Invalid arguments! (reason=\"{res}\")", ephemeral=True)
+        return
     generated_id = await id_gen(variables, trigger.value)
     if generated_id is None:
-        await ctx.response.send_message(content="Required argument missing!")
+        log.error("ID generation failed! :wah:")
+        await ctx.response.send_message(content="ID generation failed! This is an issue with the bot."
+                                                "\nPlease report your input to @quantumbagel by posting an issue on"
+                                                " [GitHub](https://github.com/quantumbagel/Triggered/issues).",
+                                        ephemeral=True)
         return
     f_id = trigger.value + "[" + generated_id + "]"
     if str(ctx.guild.id) in watching_commands.keys():
@@ -138,7 +130,7 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
         triggered_tracker["conversion"].update({str(ctx.guild.id): {name: f_id}})
     await WatchingCommandsUtil.update_watching_commands(watching_commands)
     json.dump(triggered_tracker, open('configuration/triggered_tracker.json', 'w'))
-    await ctx.response.send_message(content="Trigger created!")
+    await ctx.response.send_message(content="Trigger created!", ephemeral=True)
 
 
 @triggered.command(name="add", description="Add a 'do' to a Trigger")
@@ -146,76 +138,105 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
 async def add(ctx: discord.Interaction, trigger_id: str, do: app_commands.Choice[str], do_member: discord.Member = None,
               do_channel: discord.TextChannel = None):
     variables = {"do_member": do_member, "do_channel": do_channel, "do_action_name": do.value}
-    print(watching_commands)
-    watching_commands[str(ctx.guild.id)][triggered_tracker["conversion"][str(ctx.guild.id)][trigger_id]][
-        'do_var'].append(variables)
+    allowed, res = ValidateArguments.is_do_valid(variables, do.value, DO_REQUIREMENTS)
+    if not allowed:
+        log.error(f"Failed to validate TRIGGER action (reason=\"{res}\")")
+        await ctx.response.send_message(
+            content=f"Invalid arguments! (reason=\"{res}\")")
+        return
+    try:
+        watching_commands[str(ctx.guild.id)][triggered_tracker["conversion"][str(ctx.guild.id)][trigger_id]][
+            'do_var'].append(variables)
+    except KeyError:
+        log.warning("KeyError (probably invalid id)")
+        await ctx.response.send_message(content=f"That trigger ({trigger_id}) doesn't exist!")
+        return
     await WatchingCommandsUtil.update_watching_commands(watching_commands)
     await ctx.response.send_message(content="Trigger updated!")
-
-
-@app_commands.command(name="reset", description="Reset this server's triggers")
-async def reset(ctx: discord.Interaction):
-    ctx.response.send_message("Not implemented yet.")
 
 
 async def update_trigger_times(id: str, uid: int, guild_id: int):
     if str(guild_id) in triggered_tracker["triggers"].keys():
         if id not in triggered_tracker["triggers"][str(guild_id)].keys():
-            print("set to one (1)")
             triggered_tracker["triggers"][str(guild_id)][id] = {str(uid): 1}
         else:
             if str(uid) not in triggered_tracker["triggers"][str(guild_id)][id].keys():
-                print("set to one (2)")
                 triggered_tracker["triggers"][str(guild_id)][id].update({str(uid): 1})
             else:
-                print("Incremented")
                 triggered_tracker["triggers"][str(guild_id)][id][str(uid)] += 1
     else:
-        print("Set to one (3)")
         triggered_tracker["triggers"].update({str(guild_id): {id: {str(uid): 1}}})
     json.dump(triggered_tracker, open('configuration/triggered_tracker.json', 'w'))
 
 
+async def _handle(id_type: str, creator: discord.Member = None, guild: discord.Guild = None, other=None):
+    if creator.bot:
+        log.debug("Ignoring bot creator.")
+        return
+    if str(guild.id) not in watching_commands:
+        log.debug(f"No commands in this guild. (id={guild.id})")
+        return
+    for trigger in watching_commands[str(guild.id)].keys():
+        trigger_id = trigger.split("[")[0]
+        try:
+            key = next(key for key, value in triggered_tracker["conversion"][str(guild.id)].items() if value == trigger)
+        except StopIteration:
+            log.warning("Failed to find data :shrug:")
+            return
+        except KeyError:
+            log.warning("Missing data in triggered_tracker!")
+            return
+        variables = watching_commands[str(guild.id)][trigger]
+        if TRIGGER_REQUIREMENTS[trigger_id]["type"] == id_type:
+            try:
+                if await TRIGGER_REQUIREMENTS[trigger_id]["class"].is_valid(variables["trigger_var"], other):
+                    await update_trigger_times(key, creator.id, guild.id)
+                    sorted_dictionary = {}
+                    for do_id in variables["do_var"]:
+                        if not do_id["do_action_name"] in sorted_dictionary.keys():
+                            sorted_dictionary[do_id["do_action_name"]] = [do_id]
+                        else:
+                            sorted_dictionary[do_id["do_action_name"]].append(do_id)
+                    for identification in sorted_dictionary:
+                        send_over = {"trigger_var": variables["trigger_var"], "do_var": sorted_dictionary[identification]}
+                        await DO_REQUIREMENTS[identification]["class"].execute(send_over,
+                                                                               variables,
+                                                                               trigger,
+                                                                               key,
+                                                                               client,
+                                                                               guild,
+                                                                               creator,
+                                                                               other_discord_data=other)
+            except KeyError as e:
+                log.warning(f"Failed is_valid check!\n{e}")
+
+
 @client.event
 async def on_message(msg: discord.Message):
-    if msg.author.bot:
-        return
-    if str(msg.guild.id) not in watching_commands:
-        return
-    print(watching_commands)
-    for trigger in watching_commands[str(msg.guild.id)].keys():
-        trigger_id = trigger.split("[")[0]
-        print(triggered_tracker, msg.guild.id, trigger)
-        key = next(key for key, value in triggered_tracker["conversion"][str(msg.guild.id)].items() if value == trigger)
-        variables = watching_commands[str(msg.guild.id)][trigger]
-        if TRIGGER_REQUIREMENTS[trigger_id]["type"] == "send_msg":
-            if await TRIGGER_REQUIREMENTS[trigger_id]["class"].is_valid(variables["trigger_var"], msg):
-                await update_trigger_times(key, msg.author.id, msg.guild.id)
-                sorted_dictionary = {}
-                for do_id in variables["do_var"]:
-                    if not do_id["do_action_name"] in sorted_dictionary.keys():
-                        sorted_dictionary[do_id["do_action_name"]] = [do_id]
-                    else:
-                        sorted_dictionary[do_id["do_action_name"]].append(do_id)
-                for identification in sorted_dictionary:
-                    send_over = {"trigger_var": variables["trigger_var"], "do_var": sorted_dictionary[identification]}
-                    await DO_REQUIREMENTS[identification]["class"].execute(send_over,
-                                                                           variables,
-                                                                           trigger_id,
-                                                                           client,
-                                                                           msg.guild,
-                                                                           msg.author,
-                                                                           other_discord_data=msg)
+    await _handle("send_msg", msg.author, msg.guild, msg)
 
 
 @client.event
-async def on_voice_state_change():
-    pass
+async def on_raw_reaction_add(ctx: discord.RawReactionActionEvent):
+    await _handle("reaction_add", ctx.member, await client.fetch_guild(ctx.guild_id), ctx.emoji)
+
+@client.event
+async def on_raw_reaction_remove(ctx: discord.RawReactionActionEvent):
+    await _handle("reaction_remove", ctx.member, await client.fetch_guild(ctx.guild_id), ctx.emoji)
+
+
+@client.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    if before.channel != after.channel and after.channel is not None:
+        await _handle("vc_join", member, member.guild, [before, after])
+    if before.channel != after.channel and after.channel is None:
+        await _handle("vc_leave", member, member.guild, [before, after])
+
 
 
 @client.event
 async def on_guild_join(guild: discord.Guild):
-    log.info("Added to server " + guild.name + f"! (id={guild.id})")
+    log.info("Added to guild \"" + guild.name + f"\"! (id={guild.id})")
     embed = discord.Embed(title="Hi! I'm Triggered!",
                           description="Thanks for adding me to your server :D\nHere's some tips on how to get started.")
     embed.add_field(name="What is this bot?",

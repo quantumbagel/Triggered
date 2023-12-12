@@ -1,0 +1,2 @@
+discord.py
+emoji~=2.9.0

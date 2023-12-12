@@ -9,5 +9,5 @@ class RoleMentionedTrigger(Trigger.Trigger):
     async def is_valid(variables: dict, message: discord.Message):
         return variables["trigger_role"] in message.role_mentions
 
-    async def dropdown_name(self):
+    def dropdown_name(self):
         return "Role Mentioned"
