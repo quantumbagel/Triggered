@@ -1,8 +1,8 @@
 import json
-import discord
-from discord import errors
 import logging
 
+import discord
+from discord import errors
 
 log = logging.getLogger()
 
@@ -59,26 +59,31 @@ async def encode_object(discord_object):
         return ["channel", discord_object.id]
     if type(discord_object).__name__ == "Member":
         return ["member", discord_object.id]
-    return None
+    return discord_object
 
 
-async def decode_object(d_list: list, guild_object: discord.Guild):
+async def decode_object(d_list, guild_object: discord.Guild):
     """
     Decode the list into a discord object
     :param d_list: The list to decode
     :param guild_object: The guild
     :return: The discord object that has been decoded
     """
+    if type(d_list) is not list:
+        return d_list
     att = None
-    if d_list[0] == "role":
-        att = guild_object.get_role(d_list[1])
-    elif d_list[0] == "channel":
-        att = await guild_object.fetch_channel(d_list[1])
-    elif d_list[0] == "member":
-        att = await guild_object.fetch_member(d_list[1])
+    try:
+        if d_list[0] == "role":
+            att = guild_object.get_role(d_list[1])
+        elif d_list[0] == "channel":
+            att = await guild_object.fetch_channel(d_list[1])
+        elif d_list[0] == "member":
+            att = await guild_object.fetch_member(d_list[1])
+    except discord.errors.NotFound:
+        return att
     return att
-        
-        
+
+
 async def get_watching_commands(client: discord.Client):
     """
     Retrieve, deserialize, and restore the watching_commands from commands.json.
@@ -90,7 +95,7 @@ async def get_watching_commands(client: discord.Client):
     try:
         watching_commands = json.load(open('configuration/commands.json'))
     except json.decoder.JSONDecodeError as jde:
-        log.error("Failed to decode JSON!\n"+str(jde))
+        log.error("Failed to decode JSON!\n" + str(jde))
         return {}  # Bad decode, no commands for you
     for guild in watching_commands:
         guild_object = client.get_guild(guild)

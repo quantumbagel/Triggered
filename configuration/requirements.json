@@ -1,7 +1,7 @@
 {"triggers": {
   "contains-text": {
     "params": {
-      "text_or_word": {
+      "text": {
         "required": true
       }
     },
@@ -10,7 +10,7 @@
   },
   "contains-word": {
     "params": {
-      "text_or_word": {
+      "text": {
         "required": true
       }
     },
@@ -61,7 +61,17 @@
     },
     "class": "LeftVCTrigger",
     "type": "vc_leave"
-  }
+  },
+  "member-joined": {
+    "params": {},
+    "class": "MemberJoinTrigger",
+    "type": "member_join"
+  },
+  "member-left": {
+    "params": {},
+    "class": "MemberLeaveTrigger",
+    "type": "member_leave"
+    }
 },
   "do": {
     "send-dm": {
