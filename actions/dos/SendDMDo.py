@@ -35,4 +35,4 @@ class SendDMDo(Do.Do):
 
 
     def dropdown_name(self):
-        return "Send Message"
+        return "Send DM"

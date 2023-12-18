@@ -31,7 +31,7 @@ class SendMessageDo(Do.Do):
                             value=f"[{other_discord_data.content}]({other_discord_data.jump_url})")
         embed.set_footer(icon_url="https://avatars.githubusercontent.com/u/58365715",
                          text="Made with ❤ by @quantumbagel")
-        await data['do']['do_member'].send(embed=embed)
+        await data['do']['do_channel'].send(embed=embed)
 
     def dropdown_name(self):
         return "Send Message"
