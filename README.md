@@ -39,6 +39,8 @@ There are two types of actions - input actions (triggers) and output actions (do
 ### Implementing a Trigger
 
 Here's an example Trigger:
+
+
 ![image](https://github.com/quantumbagel/Triggered/assets/58365715/42de3727-9e81-481e-afec-64e11215001a)
 
 As you can see, you have to
@@ -83,7 +85,11 @@ Now that you've made your shiny new Trigger, you have to add it to `configuratio
 
 
 Here's example formatting:
+
+
 ![img.png](img.png)
+
+
 
 | Type                | Explanation                                                                                                                                                                                              |
 |---------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -94,6 +100,8 @@ Here's example formatting:
 ## Implementing a Do
 
 Here's an example Do:
+
+
 ![img_3.png](img_3.png)
 
 As you can see, you have to
