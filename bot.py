@@ -1,14 +1,17 @@
 # Triggered by @quantumbagel
 import logging
+import math
 import sys
+
 import discord
 from discord import app_commands
+
 import GetTriggerDo
 import MongoInterface
 import ValidateArguments
 import WatchingCommandsUtil
 
-BOT_SECRET = "MTE4MTMzODEzMzIwNDMwNzk2OA.Gw32DT.B-S6t0fQPD5dNOSlFBYd2TF-nuh2TSQC3Zwj9w"
+BOT_SECRET = ""
 MAX_DOS = 3
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger("main")
@@ -17,8 +20,8 @@ log = logging.getLogger("main")
 class Triggered(discord.Client):  # A simple client
     def __init__(self, should_sync):
         """
-        Initalize the client
-        :param should_sync: whether a heavily-ratelimited tree sync should occur
+        Initialize the client
+        :param should_sync: whether a heavily rate limited tree sync should occur
         """
         super().__init__(intents=discord.Intents.all())  # discord.py bug, declare intent to be a bot
         self.synced = False  # sync flag so we don't sync multiple times or hang the bot on reconnects
@@ -30,7 +33,6 @@ class Triggered(discord.Client):  # A simple client
         When the bot is ready, make sure everything's synced
         :return: none
         """
-        global watching_commands
         await self.wait_until_ready()
         if not self.synced and self.should_sync:  # Handle syncing
             log.info("Update detected, performing sync...")
@@ -42,16 +44,19 @@ class Triggered(discord.Client):  # A simple client
 
 class PaginationView(discord.ui.View):
     current_page: int = 1
-    sep: int = 5
+    sep: int = 1
 
-    def __init__(self, timeout=None, title=""):
+    def __init__(self, timeout=None, title="", data: list[dict[str, str]] = None, author: discord.Member = None):
         """
-        Initalize a PaginationView
+        Initialize a PaginationView
         :param timeout: the timeout (honestly not sure lol)
         :param title: The title of the View
         """
         super().__init__(timeout=timeout)
         self.title = title
+        self.author = author
+        self.data = data
+        self.message = None
 
     async def send(self, ctx: discord.Interaction):
         """
@@ -69,11 +74,13 @@ class PaginationView(discord.ui.View):
         :param data: the data to parse
         :return: the embed
         """
-        embed = discord.Embed(title=f"{self.title} (page {self.current_page}/{int(len(self.data) / self.sep) + 1})")
+        embed = discord.Embed(title=f"{self.title} (page {self.current_page}/{math.ceil(len(self.data) / self.sep)})",
+                              color=discord.Color.from_rgb(255, 87, 51))
+
         for item in data:
             embed.add_field(name=item['title'], value=item['subtitle'], inline=False)
             embed.add_field(name="Dos", value=item['dos_subtitle'])
-            embed.add_field(name="Trigger name", value=item['trigger_type'])
+            embed.add_field(name="Trigger Name", value=item['trigger_type'])
         return embed
 
     async def update_message(self, data):
@@ -87,7 +94,7 @@ class PaginationView(discord.ui.View):
 
     def update_buttons(self):
         """
-        Update the color and disabledness of the buttons depending on the current page.
+        Update the color and usability of the buttons depending on the current page.
         :return: none
         """
         if self.current_page == 1:
@@ -101,7 +108,7 @@ class PaginationView(discord.ui.View):
             self.first_page_button.style = discord.ButtonStyle.green
             self.prev_button.style = discord.ButtonStyle.primary
 
-        if self.current_page == int(len(self.data) / self.sep) + 1:
+        if self.current_page == math.ceil(len(self.data) / self.sep):
             self.next_button.disabled = True
             self.last_page_button.disabled = True
             self.last_page_button.style = discord.ButtonStyle.gray
@@ -118,40 +125,44 @@ class PaginationView(discord.ui.View):
         if not self.current_page == 1:
             from_item = 0
             until_item = self.sep
-        if self.current_page == int(len(self.data) / self.sep) + 1:
+        if self.current_page == math.ceil(len(self.data) / self.sep):
             from_item = self.current_page * self.sep - self.sep
             until_item = len(self.data)
         return self.data[from_item:until_item]
 
-    @discord.ui.button(label="|<",
+    # These are the buttons and what they do.
+
+    @discord.ui.button(emoji="⏮",
                        style=discord.ButtonStyle.green)
     async def first_page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        self.current_page = 1
+        if interaction.user.id == self.author.id:
+            await interaction.response.defer()
+            self.current_page = 1
+            await self.update_message(self.get_current_page_data())
 
-        await self.update_message(self.get_current_page_data())
-
-    @discord.ui.button(label="<",
+    @discord.ui.button(emoji="⬅",
                        style=discord.ButtonStyle.primary)
     async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        self.current_page -= 1
-        await self.update_message(self.get_current_page_data())
+        if interaction.user.id == self.author.id:
+            await interaction.response.defer()
+            self.current_page -= 1
+            await self.update_message(self.get_current_page_data())
 
-    @discord.ui.button(label=">",
+    @discord.ui.button(emoji="➡",
                        style=discord.ButtonStyle.primary)
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        self.current_page += 1
-        await self.update_message(self.get_current_page_data())
+        if interaction.user.id == self.author.id:
+            await interaction.response.defer()
+            self.current_page += 1
+            await self.update_message(self.get_current_page_data())
 
-    @discord.ui.button(label=">|",
+    @discord.ui.button(emoji="⏭",
                        style=discord.ButtonStyle.green)
     async def last_page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        self.current_page = int(len(self.data) / self.sep) + 1
-        await self.update_message(self.get_current_page_data())
-
+        if interaction.user.id == self.author.id:
+            await interaction.response.defer()
+            self.current_page = math.ceil(len(self.data) / self.sep)
+            await self.update_message(self.get_current_page_data())
 
 
 TRIGGER_REQUIREMENTS, DO_REQUIREMENTS = GetTriggerDo.get_trigger_do()
@@ -173,7 +184,7 @@ for defined_do in DO_REQUIREMENTS.keys():
     dropdown_key = DO_REQUIREMENTS[defined_do]['class']().dropdown_name()
     DO_OPTIONS.append(app_commands.Choice(name=dropdown_key, value=defined_do))
 
-sync_update = True  # TODO: Add MongoDB dynamic update sync
+sync_update = False  # TODO: Add MongoDB dynamic update sync
 client = Triggered(sync_update)
 tree = app_commands.CommandTree(client)  # Build command tree
 db_client = MongoInterface.get_client()
@@ -214,8 +225,8 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
     if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
         log.error("User attempted to access with insufficient permission >:(")
         await ctx.followup.send(content=f"Insufficient permission!"
-                                                f" Your highest role must be above mine to use my commands!",
-                                        ephemeral=True)
+                                        f" Your highest role must be above mine to use my commands!",
+                                ephemeral=True)
         return
 
     # Encode variables
@@ -228,7 +239,7 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
     if not allowed:
         log.error(f"Failed to validate TRIGGER action (reason=\"{res}\")")
         await ctx.followup.send(content=f"Invalid arguments! (reason=\"{res}\")",
-                                        ephemeral=True)
+                                ephemeral=True)
         return
 
     # Encode variables
@@ -238,12 +249,11 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
 
     valid = [col for col in list(watching_commands_access.list_collection_names()) if
              col.split('.')[0] == str(ctx.guild.id)]
-    print(valid, str(ctx.guild.id) + "." + name)
     if str(ctx.guild.id) + "." + name in valid:
         log.error("Command already exists! Can't recreate unless deleted.")
         await ctx.followup.send(content=f"That command ({name}) already exists in this server!\n"
-                                                f"If you own this command, please run /triggered delete trigger {name}."
-                                        , ephemeral=True)
+                                        f"If you own this command, please run /triggered delete trigger {name}.",
+                                ephemeral=True)
         return
 
     watching_commands_access[str(ctx.guild.id)][name].insert_one(n_var)
@@ -251,7 +261,7 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
         {"type": "meta", "author": await WatchingCommandsUtil.encode_object(ctx.user)})
     watching_commands_access[str(ctx.guild.id)][name].insert_one(
         {"type": "tracker"})
-    await ctx.followup.send(content="Trigger created!", ephemeral=True)
+    await ctx.followup.send(content=f"Trigger \"{name}\"created!", ephemeral=True)
 
 
 @triggered.command(name="add", description="Add a 'do' to a Trigger")
@@ -286,8 +296,8 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
     if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
         log.error("User attempted to access with insufficient permission >:(")
         await ctx.followup.send(content=f"Insufficient permission!"
-                                                f" Your highest role must be above mine to use my commands!",
-                                        ephemeral=True)
+                                        f" Your highest role must be above mine to use my commands!",
+                                ephemeral=True)
         return
 
     # Compile the variables
@@ -325,13 +335,13 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
         else:
             log.warning("Insufficient permissions!")
             await ctx.followup.send(content=f"You didn't create this trigger (and you're not the owner)."
-                                                    f"\nTherefore, you can't edit this trigger.", ephemeral=True)
+                                            f"\nTherefore, you can't edit this trigger.", ephemeral=True)
             return
     else:
         log.warning("User attempted to access non-existent trigger!")
         await ctx.followup.send(content=f"That trigger ({trigger_name}) doesn't exist!", ephemeral=True)
         return
-    await ctx.followup.send(content="Trigger updated!", ephemeral=True)
+    await ctx.followup.send(content=f"Do {do_name} added to trigger {trigger_name}!", ephemeral=True)
 
 
 @triggered.command(description="Delete a selected do or trigger")
@@ -347,28 +357,28 @@ async def delete(ctx: discord.Interaction, to_delete: app_commands.Choice[str], 
         # Insufficient permissions
         log.error("User attempted to access with insufficient permission >:(")
         await ctx.followup.send(content=f"Insufficient permission!"
-                                                f" Your highest role must be above mine to use my commands!",
-                                        ephemeral=True)
+                                        f" Your highest role must be above mine to use my commands!",
+                                ephemeral=True)
         return
     valid = [col for col in list(watching_commands_access.list_collection_names()) if
              col.split('.')[0] == str(ctx.guild.id)]
     if str(ctx.guild.id) + '.' + trigger_name not in valid:  # Trigger doesn't exist
         log.error("Invalid command to delete!")
         await ctx.followup.send(content=f"That command ({trigger_name}) doesn't exist in this server!",
-                                        ephemeral=True)
+                                ephemeral=True)
         return
     meta = dict(watching_commands_access[str(ctx.guild.id)][trigger_name].find_one({"type": "meta"}, {"_id": False}))
     if int(meta["author"][1]) != ctx.user.id and ctx.user.id != ctx.guild.owner.id:  # User isn't author of trigger
         log.error("User is not author!")
         await ctx.followup.send(content=f"You have to be the author of this trigger (or server owner)"
-                                                f" to remove this {to_delete.value}.",
-                                        ephemeral=True)
+                                        f" to remove this {to_delete.value}.",
+                                ephemeral=True)
         return
 
     if to_delete.value == "do" and do_name is None:  # Invalid arguments
         log.error("User tried to delete do, but didn't provide ID")
         await ctx.followup.send(content="You have to provide both a trigger_name and a do_id to delete a Do.",
-                                        ephemeral=True)
+                                ephemeral=True)
         return
     elif to_delete.value == 'do':
         value = watching_commands_access[str(ctx.guild.id)][trigger_name].find_one({"do_name": do_name}, {"_id": False})
@@ -397,33 +407,93 @@ async def delete(ctx: discord.Interaction, to_delete: app_commands.Choice[str], 
                             app_commands.Choice(name="View", value="view"),
                             app_commands.Choice(name="List all", value="view-all")])
 async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: str = None):
+    """
+    View or search for the server's commands, and use PaginationView to send them.
+    :param ctx: The Interaction object
+    :param mode: The mode the command should run in
+    :param query: The query (if applicable)
+    :return: none
+    """
+    # Bot check
+    if ctx.user.bot:
+        log.error("User is a bot >>>:(")
+        return
     # Defer
     await ctx.response.defer()
-    if mode.value in ["search", "view"] and query is None:
-        ctx.followup.send(f"Please provide a query for the mode {mode.value}!")
+    if mode.value in ["search", "view"] and query is None:  # We need a query for certain modes
+        await ctx.followup.send(f"Please provide a query for the mode {mode.name}!")
         return
     valid = [col for col in list(watching_commands_access.list_collection_names()) if
-             col.split('.')[0] == str(ctx.guild.id)]
-    data = []
-    print(valid)
-    for index, command in enumerate(valid):
-        title = f"{index+1}. {command.split('.')[1]}"
-        creator_id = dict(watching_commands_access[command].find_one({"type": "meta"}, {"_id": False}))["author"][1]
-        naive = ctx.guild.get_member(creator_id)
-        if naive is not None:
-            creation = f"Created by {naive}"
-        else:
-            creation = f"Created by {await client.fetch_user(creator_id)}"
-        data.append({
-            "title": "1. a",
-            "subtitle": f"Created by <somebody>",
-            "dos_subtitle": f"4/{MAX_DOS}",
-            "trigger_type": "Contains Text"
-        })
+             col.split('.')[0] == str(ctx.guild.id)]  # Pool of guild's triggers
+    data = []  # Data to send to the PaginationView
+    if mode.value in ["search", "view-all"]:
+        for index, command in enumerate(valid):  # for every command
 
-    pagination_view = PaginationView(timeout=None, title="Server Commands")
-    pagination_view.data = data
-    await pagination_view.send(ctx)
+            # Just some information about each command, gathered through MongoDB
+            cmd_id = command.split('.')[1]
+            creator_id = dict(watching_commands_access[command].find_one({"type": "meta"}, {"_id": False}))["author"][1]
+            num_dos = list(watching_commands_access[command].find({"type": "do"}, {"_id": False}))
+            trigger_access = dict(watching_commands_access[command].find_one({"type": "trigger"}, {"_id": False}))
+            dropdown = TRIGGER_REQUIREMENTS[trigger_access['trigger_action_name']]['class']().dropdown_name()
+
+            # Shave an API call
+            u = ctx.guild.get_member(creator_id)
+            if u is not None:
+                creation = f"Created by {u.mention}"
+            else:
+                u = await client.fetch_user(creator_id)
+                creation = f"Created by {u.mention}"
+
+            if mode.value == "search":  # If we are in search mode, we have to check if the query matches
+                searchable = [u.global_name.lower(), u.name.lower(), dropdown.lower(), cmd_id.lower()]  # search tokens
+                if u.nick is not None:
+                    searchable.append(u.nick.lower())  # If we have a nickname, make sure to make it searchable
+                valid_response = False  # Don't add it (yet)
+                for value in searchable:
+                    if query.lower() in value:  # If there's a match
+                        valid_response = True  # Add it
+                        break
+                if valid_response:  # We should add
+                    data.append({
+                        "title": str(len(data) + 1) + '. ' + cmd_id,
+                        "subtitle": creation,
+                        "dos_subtitle": f"{len(num_dos)}/{MAX_DOS}",
+                        "trigger_type": dropdown
+                    })
+            elif mode.value == "view-all":  # We're adding everything anyway *shrug*
+                data.append({
+                    "title": str(len(data) + 1) + '. ' + cmd_id,
+                    "subtitle": creation,
+                    "dos_subtitle": f"{len(num_dos)}/{MAX_DOS}",
+                    "trigger_type": dropdown
+                })
+        if len(data) != 0:  # There were search results
+
+            # Different title depending on mode
+            if mode.value == "view-all":
+                title_to_use = "Server Triggers"
+            elif mode.value == "search":
+                title_to_use = f"Server Results for query \"{query}\""
+            else:
+                title_to_use = "Title Processing Error"
+
+            pagination_view = PaginationView(timeout=None, title=title_to_use, data=data, author=ctx.user)
+            await pagination_view.send(ctx)
+        else:  # There's no search results (or no triggers)
+            if mode.value == "search":
+                embed = discord.Embed(title="No search results found!",
+                                      description=f"It looks like there are no results for your query \"{query}\"",
+                                      color=discord.Color.from_rgb(255, 87, 51))
+            elif mode.value == "list-all":
+                embed = discord.Embed(title="There are no triggers in this server!",
+                                      description="There are no triggers set up yet in this server. Be the first one!",
+                                      color=discord.Color.from_rgb(255, 87, 51))
+            else:
+                embed = discord.Embed(title="Failed to process input correctly.",
+                                      description="Take a screenshot - this should never happen :/")
+            await ctx.followup.send(embed=embed, ephemeral=True)  # Don't bother making a PaginationView
+    else:  # We are viewing one command
+        return
 
 
 async def handle(id_type: str, creator: discord.Member = None, guild: discord.Guild = None, other=None):
@@ -450,7 +520,7 @@ async def handle(id_type: str, creator: discord.Member = None, guild: discord.Gu
         if TRIGGER_REQUIREMENTS[submit_trigger_dict["trigger_action_name"]]["type"] == id_type:
             try:
                 if await (TRIGGER_REQUIREMENTS[submit_trigger_dict["trigger_action_name"]]["class"]
-                        .is_valid(submit_trigger_dict, other)):
+                          .is_valid(submit_trigger_dict, other)):
                     watching_commands_access[database_id].update_one({"type": "tracker"},
                                                                      {"$inc": {str(creator.id): 1}})
                     pre_dos = list(watching_commands_access[str(guild.id)][trigger]
@@ -485,6 +555,7 @@ async def handle(id_type: str, creator: discord.Member = None, guild: discord.Gu
                 log.warning(f"Failed is_valid check!\n{ke}")
                 raise ke
 
+
 @client.event
 async def on_message(msg: discord.Message):
     """
@@ -492,6 +563,8 @@ async def on_message(msg: discord.Message):
     :param msg: The message
     :return: None
     """
+    log.debug(f'Event "reaction_add" has been triggered! (server="{msg.guild.name}", server_id={msg.guild.id},'
+              f' member={msg.author.global_name}, member_id={msg.author.id})')
     await handle("send_msg", msg.author, msg.guild, msg)
 
 
@@ -502,7 +575,10 @@ async def on_raw_reaction_add(ctx: discord.RawReactionActionEvent):
     :param ctx: The data from discord
     :return: None
     """
-    await handle("reaction_add", ctx.member, await client.fetch_guild(ctx.guild_id), ctx.emoji)
+    event_guild = await client.fetch_guild(ctx.guild_id)
+    log.debug(f'Event "reaction_add" has been triggered! (server="{event_guild.name}", server_id={event_guild.id},'
+              f' member={ctx.member.global_name}, member_id={ctx.member.id})')
+    await handle("reaction_add", ctx.member, event_guild, ctx.emoji)
 
 
 @client.event
@@ -512,19 +588,28 @@ async def on_raw_reaction_remove(ctx: discord.RawReactionActionEvent):
     :param ctx: The data from discord
     :return: None
     """
-    await handle("reaction_remove", ctx.member, await client.fetch_guild(ctx.guild_id), ctx.emoji)
+    event_guild = await client.fetch_guild(ctx.guild_id)
+    log.debug(f'Event "reaction_remove" has been triggered! (server="{event_guild.name}", server_id={event_guild.id},'
+              f' member={ctx.member.global_name}, member_id={ctx.member.id})')
+    await handle("reaction_remove", ctx.member, event_guild, ctx.emoji)
 
 
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
     """
-    Handle the reaction_add trigger and redirect to handle()
-    :param ctx: The data from discord
+    Handle the vc_join and vc_leave trigger and redirect to handle()
+    :param after: the VoiceState after
+    :param before: the VoiceState before
+    :param member: the member
     :return: None
     """
     if before.channel != after.channel and after.channel is not None:
+        log.debug(f'Event "vc_join" has been triggered! (server={member.guild.name}, server_id={member.guild.id},'
+                  f' member={member.global_name}, member_id={member.id})')
         await handle("vc_join", member, member.guild, [before, after])
     if before.channel != after.channel and after.channel is None:
+        log.debug(f'Event "vc_leave" has been triggered! (server={member.guild.name}, server_id={member.guild.id},'
+                  f' member={member.global_name}, member_id={member.id})')
         await handle("vc_leave", member, member.guild, [before, after])
 
 
@@ -535,6 +620,8 @@ async def on_member_join(member: discord.Member):
     :param member: The member who joined
     :return: None
     """
+    log.debug(f'Event "member_join" has been triggered! (server={member.guild.name}, server_id={member.guild.id},'
+              f' member={member.global_name}, member_id={member.id})')
     await handle("member_join", member, member.guild)
 
 
@@ -545,6 +632,8 @@ async def on_member_remove(member: discord.Member):
     :param member: The member who left :(
     :return: None
     """
+    log.debug(f'Event "member_leave" has been triggered! (server={member.guild.name}, server_id={member.guild.id},'
+              f' member={member.global_name}, member_id={member.id})')
     await handle("member_leave", member, member.guild)
 
 
@@ -552,8 +641,8 @@ async def on_member_remove(member: discord.Member):
 async def on_guild_join(guild: discord.Guild):
     """
     Send a message to guilds when the bot is added.
-    :param guild: 
-    :return: 
+    :param guild: the guild the bot was added to
+    :return: nothing
     """
     log.info("Added to guild \"" + guild.name + f"\"! (id={guild.id})")
     embed = discord.Embed(title="Hi! I'm Triggered!",
@@ -595,15 +684,18 @@ async def on_guild_leave(guild: discord.Guild):
     :param guild: The guild we were removed from
     :return: nothing
     """
+    log.info(f"Dropping all triggers from guild \"{guild.name}\" (id={guild.id})")
     valid = [col for col in list(watching_commands_access.list_collection_names()) if
              col.split('.')[0] == str(guild.id)]
     for command_to_remove in valid:
         watching_commands_access.drop_collection(command_to_remove)
+    log.info(f"Dropped {len(valid)} commands.")
+
 
 try:
     tree.add_command(triggered, guild=discord.Object(id=client.sync_to))
     client.run(BOT_SECRET)
 except Exception as e:
-    print("Critical error:", e)
-    print("This is likely due to:\n1. Internet issues\n2. Incorrect discord token\n3. Incorrectly set up discord bot")
-
+    log.critical(f"Critical error: {str(e)}")
+    log.critical("This is likely due to:\n1. Internet issues\n2. Incorrect discord token\n3. Incorrectly set up "
+                 "discord bot")

@@ -4,7 +4,7 @@ import discord
 
 class Trigger(abc.ABC):
     @abc.abstractmethod
-    async def human(variables: dict):
+    async def human(variables: dict) -> str:
         """
         Return a human-readable repr of the Trigger
         :return:
@@ -12,7 +12,7 @@ class Trigger(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def is_valid(variables: dict, discord_object: discord.Object):
+    async def is_valid(variables: dict, discord_object: discord.Object) -> bool:
         """
         Return if the Trigger has fired
         :param discord_object: The message / channel / voice state
@@ -21,7 +21,7 @@ class Trigger(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def dropdown_name(self):
+    def dropdown_name(self) -> str:
         """
         Return a formatted name for the bot's choices (e.x. Contains Text)
         :return: the formatted name
