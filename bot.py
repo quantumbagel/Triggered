@@ -11,7 +11,7 @@ import MongoInterface
 import ValidateArguments
 import WatchingCommandsUtil
 
-BOT_SECRET = "MTE4MTMzODEzMzIwNDMwNzk2OA.Gw32DT.B-S6t0fQPD5dNOSlFBYd2TF-nuh2TSQC3Zwj9w"
+BOT_SECRET = "your-token"
 MAX_DOS = 3
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger("main")
@@ -36,8 +36,8 @@ class Triggered(discord.Client):  # A simple client
         await self.wait_until_ready()
         if not self.synced and self.should_sync:  # Handle syncing
             log.info("Update detected, performing sync...")
-            tree.copy_global_to(guild=discord.Object(id=self.sync_to))
-            await tree.sync(guild=discord.Object(id=self.sync_to))
+            #tree.copy_global_to(guild=discord.Object(id=self.sync_to))
+            await tree.sync()
         self.synced = True
         log.info("(re)Logged into discord!")
 
@@ -590,7 +590,7 @@ async def handle(id_type: str, creator: discord.Member = None, guild: discord.Gu
                         col.split('.')[0] == str(guild.id)]:  # Iterate through each command that this guild has
         trigger = database_id.split('.')[1]  # The command name
         trigger_dict = dict(watching_commands_access[str(guild.id)][trigger]
-                            .find_one({"type": "trigger"}, {'_id': False}))  # Trigger data
+                            .find_one({"type": "trigger"}, {'_id': False, "type": False}))  # Trigger data
         submit_trigger_dict = {}
         for item in trigger_dict.keys():
             submit_trigger_dict.update({item: await WatchingCommandsUtil.decode_object(trigger_dict[item], guild)})
@@ -601,7 +601,7 @@ async def handle(id_type: str, creator: discord.Member = None, guild: discord.Gu
                     watching_commands_access[database_id].update_one({"type": "tracker"},
                                                                      {"$inc": {str(creator.id): 1}})
                     pre_dos = list(watching_commands_access[str(guild.id)][trigger]
-                                   .find({"type": "do"}, {'_id': False}))  # The do data from the DB
+                                   .find({"type": "do"}, {'_id': False, 'type': False}))  # The do data from the DB
 
                     # Decode the "dos" section of the DB
                     submit_dos = []
@@ -613,13 +613,13 @@ async def handle(id_type: str, creator: discord.Member = None, guild: discord.Gu
 
                     # Decode the "meta" section of the DB
                     meta = dict(watching_commands_access[str(guild.id)][trigger]
-                                .find_one({"type": "meta"}, {'_id': False}))
+                                .find_one({"type": "meta"}, {'_id': False, 'type': False}))
                     submit_meta = {}
                     for item in meta.keys():
                         submit_meta.update({item: await WatchingCommandsUtil.decode_object(meta[item], guild)})
 
                     submit_tracker = dict(watching_commands_access[str(guild.id)][trigger]
-                                          .find_one({"type": "tracker"}, {'_id': False}))
+                                          .find_one({"type": "tracker"}, {'_id': False, 'type': False}))
                     for identification in submit_dos:
                         # Compile the data together
                         data = {"do": identification, "dos": submit_dos, "trigger": submit_trigger_dict,
