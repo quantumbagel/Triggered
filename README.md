@@ -138,7 +138,11 @@ Now that you've made your Do, you have to add it to `configuration/requirements.
 
 
 Here's example formatting:
+
+
 ![img_1.png](img_1.png)
+
+
 
 | Type                | Explanation                                                                   |
 |---------------------|-------------------------------------------------------------------------------|
