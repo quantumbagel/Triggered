@@ -22,10 +22,10 @@ I have tried to make this bot extensible (so it's very easy to add your own inpu
 
 
 1. Go to [Discord's developer website](https://discord.com/developers) and sign in with your Discord account.
-2. Create a bot [here's a official tutorial](https://discord.com/developers/docs/getting-started)
+2. Create a bot [here's an official tutorial](https://discord.com/developers/docs/getting-started)
 3. Clone this repository.
 4. Install dependencies (`pip install -r requirements.txt`))
-5. Get your bot's secret and set the `BOT_SECRET` variable to it.
+5. Get your bot secret and set the `BOT_SECRET` variable to it.
 6. Add your bot to your server and enjoy (`python3 bot.py`)!
 
 
@@ -205,4 +205,4 @@ There are two modes for this command.
 * Better permission handling than current system
 
 
-That's all! :D
+That's all! \:D

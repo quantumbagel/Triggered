@@ -11,7 +11,7 @@ import MongoInterface
 import ValidateArguments
 import WatchingCommandsUtil
 
-BOT_SECRET = "your-token"
+BOT_SECRET = "MTE4MTMzODEzMzIwNDMwNzk2OA.G6I9-L.qWJOcYZ3Xj4YyeHZ3KSNdsRx3l5Tke3DrqjJfI"
 MAX_DOS = 3
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger("main")
@@ -21,25 +21,10 @@ class Triggered(discord.Client):  # A simple client
     def __init__(self, should_sync):
         """
         Initialize the client
-        :param should_sync: whether a heavily rate limited tree sync should occur
+        :param should_sync: whether a heavily rate limited tree sync should occur (dep)
         """
         super().__init__(intents=discord.Intents.all())  # discord.py bug, declare intent to be a bot
-        self.synced = False  # sync flag so we don't sync multiple times or hang the bot on reconnects
-        self.sync_to = 927616485378129930
         self.should_sync = should_sync
-
-    async def on_ready(self):  # Just sync commands
-        """
-        When the bot is ready, make sure everything's synced
-        :return: none
-        """
-        await self.wait_until_ready()
-        if not self.synced and self.should_sync:  # Handle syncing
-            log.info("Update detected, performing sync...")
-            #tree.copy_global_to(guild=discord.Object(id=self.sync_to))
-            await tree.sync()
-        self.synced = True
-        log.info("(re)Logged into discord!")
 
 
 class PaginationView(discord.ui.View):
@@ -300,9 +285,6 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
     :param description: The description of the purpose of the do
     :return: None
     """
-    # Defer
-    #await ctx.response.defer()
-
     # Bot check
     if ctx.user.bot:
         log.error("User is a bot >>>:(")
@@ -640,6 +622,11 @@ async def on_message(msg: discord.Message):
     :param msg: The message
     :return: None
     """
+    if msg.content == "triggered/sync" and msg.author.id == 897146430664355850:  # Performs sync
+        await tree.sync()
+        log.info("Performed authorized sync.")
+        await msg.add_reaction("✅")  # leave confirmation
+        return
     if msg.guild is None:
         return
     log.debug(f'Event "on_message" has been triggered! (server="{msg.guild.name}", server_id={msg.guild.id},'
@@ -668,9 +655,13 @@ async def on_raw_reaction_remove(ctx: discord.RawReactionActionEvent):
     :return: None
     """
     event_guild = await client.fetch_guild(ctx.guild_id)
+    identity = ctx.user_id
+    u_obj = event_guild.get_member(identity)
+    if u_obj is None:
+        u_obj = await event_guild.fetch_member(identity)
     log.debug(f'Event "reaction_remove" has been triggered! (server="{event_guild.name}", server_id={event_guild.id},'
-              f' member={ctx.member.global_name}, member_id={ctx.member.id})')
-    await handle("reaction_remove", ctx.member, event_guild, ctx.emoji)
+              f' member={u_obj.global_name}, member_id={u_obj.id})')
+    await handle("reaction_remove", u_obj, event_guild, ctx.emoji)
 
 
 @client.event
@@ -772,7 +763,7 @@ async def on_guild_leave(guild: discord.Guild):
 
 
 try:
-    tree.add_command(triggered, guild=discord.Object(id=client.sync_to))
+    tree.add_command(triggered)
     client.run(BOT_SECRET)
 except Exception as e:
     log.critical(f"Critical error: {str(e)}")
