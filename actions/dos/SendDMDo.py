@@ -6,7 +6,7 @@ import actions.dos.Do as Do
 
 class SendDMDo(Do.Do):
     async def human(variables: dict, trigger_id: str):
-        return f"Sent message to #{variables['do_channel'].name}."
+        return f"Sent message to @{variables['do_member'].name}."
 
     async def execute(data: dict, client, guild: discord.Guild, author: discord.Member, other_discord_data=None):
         trigger_requirements, do_requirements = GetTriggerDo.get_trigger_do()

@@ -25,7 +25,7 @@ I have tried to make this bot extensible (so it's very easy to add your own inpu
 2. Create a bot [here's an official tutorial](https://discord.com/developers/docs/getting-started)
 3. Clone this repository.
 4. Install dependencies (`pip install -r requirements.txt`))
-5. Get your bot secret and set the `BOT_SECRET` variable to it.
+5. Get your bot secret, create a file named `key`, and paste your token in.
 6. Add your bot to your server and enjoy (`python3 bot.py`)!
 
 
@@ -87,7 +87,7 @@ Now that you've made your shiny new Trigger, you have to add it to `configuratio
 Here's example formatting:
 
 
-![img.png](img.png)
+![img.png](assets/img.png)
 
 
 
@@ -102,7 +102,7 @@ Here's example formatting:
 Here's an example Do:
 
 
-![img_3.png](img_3.png)
+![img_3.png](assets/img_3.png)
 
 As you can see, you have to
 
@@ -140,7 +140,7 @@ Now that you've made your Do, you have to add it to `configuration/requirements.
 Here's example formatting:
 
 
-![img_1.png](img_1.png)
+![img_1.png](assets/img_1.png)
 
 
 
