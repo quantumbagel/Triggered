@@ -278,7 +278,6 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
     if ctx.user.bot:
         f_log.error("User is a bot >>>:(")
         return
-    print(str(ctx.channel.type))
     if str(ctx.channel.type) == "private":  # No DMs - yet
         f_log.error("Commands don't work in DMs!")
         embed = generate_simple_embed("Commands don't work in DMs!",
@@ -655,7 +654,7 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
                 f_log.debug(f"No search results found for query \"{query}!\"")
                 embed = generate_simple_embed("No search results found!",
                                               f"It looks like there are no results for your query \"{query}!\"")
-            elif mode.value == "list-all":
+            elif mode.value == "view-all":
                 f_log.debug(f"No triggers found in server (name=\"{ctx.guild.name},\" id={ctx.guild.id})!")
                 embed = generate_simple_embed("There are no triggers in this server!",
                                               "There are no triggers set up yet in this server. Be the first one!")
