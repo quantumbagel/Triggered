@@ -584,6 +584,16 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
                                       " Support for some DM commands may come in the future.")
         await ctx.response.send_message(embed=embed)
         return
+
+    # Ensure permissions
+    if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
+        f_log.error("User attempted to access with insufficient permission >:(")
+        embed = generate_simple_embed("Insufficient permission!",
+                                      "Your highest role must be above mine to use my commands!")
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return
+
+
     if mode.value in ["search", "view"] and query is None:  # We need a query for certain modes
         f_log.error(f"Query missing for mode {mode.value}!")
         embed = generate_simple_embed(f"Please provide a query for the mode {mode.name}!",
