@@ -221,13 +221,13 @@ for defined_do in DO_REQUIREMENTS.keys():
 log.debug("Successfully built Options/Requirements!")
 client = Triggered()
 tree = app_commands.CommandTree(client)  # Build command tree
-db_client = MongoClient(host=configuration["mongo_database_connection_string"], serverSelectionTimeoutMS=5000)
+db_client = MongoClient(host=configuration["mongodb_uri"], serverSelectionTimeoutMS=5000)
 # 5 secs to establish a connection
 try:
 
     db_client.admin.command('ismaster')
 except pymongo.errors.ServerSelectionTimeoutError:
-    log.critical(f"Failed to connect to MongoDB database (uri=\"{configuration['mongo_database_connection_string']}\")")
+    log.critical(f"Failed to connect to MongoDB database (uri=\"{configuration['mongodb_uri']}\")")
     sys.exit(1)
 log.debug("Successfully connected to MongoDB!")
 watching_commands_access = db_client['commands']
