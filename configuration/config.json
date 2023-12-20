@@ -1,0 +1,6 @@
+{"bot_secret": "",
+  "max_dos_per_trigger": 3,
+  "argument_length_limit":  128,
+  "allowed_do_execution": 3,
+  "owner_id": 897146430664355850,
+  "mongo_database_connection_string": "mongodb://localhost:27017"}

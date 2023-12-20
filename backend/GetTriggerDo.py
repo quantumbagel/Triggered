@@ -1,14 +1,14 @@
 import importlib
 import json
 
-import ValidateTriggerDo
+import backend.ValidateTriggerDo
 
 
 def get_trigger_do():
     f_obj = json.load(open('configuration/requirements.json'))
     imported_trigger = f_obj['triggers']
     trigger_requirements = imported_trigger.copy()
-    valid = ValidateTriggerDo.validate(f_obj)
+    valid = backend.ValidateTriggerDo.validate(f_obj)
     if valid:
         return valid, None
     for item in imported_trigger.keys():

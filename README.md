@@ -195,14 +195,16 @@ There are two modes for this command.
 * Do - delete the Do with id `do_name` inside the trigger with id `trigger_name`
 
 
-## TODOS
+## TODOS to v1.0 (in order of priority)
 
-* Better in-app help / descriptions of arguments
-* Use embeds every time the bot responds
-* More Dos
+* ~~Better in-app help / descriptions of arguments~~
+* ~~Use embeds every time the bot responds~~
+* Multithreading do/trigger execution to prevent malicious code from blocking main thread
+Certain type inheritance for dos
 * A "periodic" trigger type that runs every so often
-* More trigger types (like message-edit or AutoMod related things)
 * Better permission handling than current system
+* More trigger types (like message-edit or AutoMod related things) (may remove)
+More Dos
 
 
-That's all! \:D
+That's all! :D

@@ -1,6 +1,5 @@
-import json
 import discord
-import GetTriggerDo
+from backend import GetTriggerDo
 import actions.dos.Do as Do
 
 

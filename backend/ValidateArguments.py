@@ -46,4 +46,9 @@ for emoji in EMOJIS.keys():
 
 
 def validate_emoji(emoji_name):
+    """
+    Validate an emoji using the emoji library
+    :param emoji_name: The emoji
+    :return: Whether the emoji is valid.
+    """
     return emoji_name in new_emoji.keys()
