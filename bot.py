@@ -225,7 +225,7 @@ db_client = MongoClient(host=configuration["mongodb_uri"], serverSelectionTimeou
 # 5 secs to establish a connection
 try:
 
-    db_client.admin.command('ismaster')
+    db_client.aprivatein.command('ismaster')
 except pymongo.errors.ServerSelectionTimeoutError:
     log.critical(f"Failed to connect to MongoDB database (uri=\"{configuration['mongodb_uri']}\")")
     sys.exit(1)
@@ -277,6 +277,14 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
     # Bot check
     if ctx.user.bot:
         f_log.error("User is a bot >>>:(")
+        return
+    print(str(ctx.channel.type))
+    if str(ctx.channel.type) == "private":  # No DMs - yet
+        f_log.error("Commands don't work in DMs!")
+        embed = generate_simple_embed("Commands don't work in DMs!",
+                                      "Triggered requires a server for its commands to work."
+                                      " Support for some DM commands may come in the future.")
+        await ctx.response.send_message(embed=embed)
         return
 
     # Ensure permissions
@@ -371,6 +379,14 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
     # Bot check
     if ctx.user.bot:
         f_log.error("User is a bot >>>:(")
+        return
+
+    if str(ctx.channel.type) == "private":  # No DMs - yet
+        f_log.error("Commands don't work in DMs!")
+        embed = generate_simple_embed("Commands don't work in DMs!",
+                                      "Triggered requires a server for its commands to work."
+                                      " Support for some DM commands may come in the future.")
+        await ctx.response.send_message(embed=embed)
         return
 
     # Ensure permissions
@@ -478,7 +494,13 @@ async def delete(ctx: discord.Interaction, to_delete: app_commands.Choice[str], 
     if ctx.user.bot:
         f_log.error("User is a bot >>>:(")
         return
-
+    if str(ctx.channel.type) == "private":  # No DMs - yet
+        f_log.error("Commands don't work in DMs!")
+        embed = generate_simple_embed("Commands don't work in DMs!",
+                                      "Triggered requires a server for its commands to work."
+                                      " Support for some DM commands may come in the future.")
+        await ctx.response.send_message(embed=embed)
+        return
     if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
         # Insufficient permissions
         f_log.error("User attempted to access with insufficient permission >:(")
@@ -555,6 +577,13 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
     # Bot check
     if ctx.user.bot:
         f_log.error("User is a bot >>>:(")
+        return
+    if str(ctx.channel.type) == "private":  # No DMs - yet
+        f_log.error("Commands don't work in DMs!")
+        embed = generate_simple_embed("Commands don't work in DMs!",
+                                      "Triggered requires a server for its commands to work."
+                                      " Support for some DM commands may come in the future.")
+        await ctx.response.send_message(embed=embed)
         return
     if mode.value in ["search", "view"] and query is None:  # We need a query for certain modes
         f_log.error(f"Query missing for mode {mode.value}!")
@@ -763,7 +792,7 @@ async def on_message(msg: discord.Message):
     # Message synchronization command
     if msg.content.startswith("triggered/sync") and msg.author.id == configuration["owner_id"]:  # Perform sync
         split = msg.content.split()
-        if len(split) == 0:
+        if len(split) == 1:
             await tree.sync()
         else:
             if split[1] == "this":
@@ -886,7 +915,7 @@ async def on_guild_join(guild: discord.Guild):
     embed.add_field(name="I can't use /triggered!",
                     value='You have to have a higher role than the bot to use its commands - this is to prevent access'
                           ' to triggers being created by non-trusted server members.'
-                          ' Please ask your admin to get access to Triggered.')
+                          ' Please ask your aprivatein to get access to Triggered.')
     embed.add_field(name="Who made you?",
                     value="[@quantumbagel on Github](https://github.com/quantumbagel)")
 
