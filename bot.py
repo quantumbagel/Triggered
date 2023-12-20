@@ -558,7 +558,9 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
         return
     if mode.value in ["search", "view"] and query is None:  # We need a query for certain modes
         f_log.error(f"Query missing for mode {mode.value}!")
-        await ctx.response.send_message(f"Please provide a query for the mode {mode.name}!", ephemeral=True)
+        embed = generate_simple_embed(f"Please provide a query for the mode {mode.name}!",
+                                      f"This mode requires an argument (how can you {mode.name.lower()} something without an argument?)")
+        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
     valid = [col for col in list(watching_commands_access.list_collection_names()) if
              col.split('.')[0] == str(ctx.guild.id)]  # Pool of guild's triggers
