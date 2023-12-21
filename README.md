@@ -201,6 +201,7 @@ There are two modes for this command.
 * ~~Use embeds every time the bot responds~~
 * Multithreading do/trigger execution to prevent malicious code from blocking main thread
 Certain type inheritance for dos
+* update README with better explanations
 * A "periodic" trigger type that runs every so often
 * Better permission handling than current system
 * More trigger types (like message-edit or AutoMod related things) (may remove)
