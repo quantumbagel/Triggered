@@ -25,7 +25,7 @@ class SendDMDo(Do.Do):
                         .human(action, data["trigger"]["trigger_action_name"]) + '\n')
         actions = actions[:-1]
         embed.add_field(name="Actions taken:", value=actions, inline=False)
-        if type(other_discord_data) == discord.Message:
+        if type(other_discord_data) is discord.Message:
             embed.add_field(name="Message content:",
                             value=f"[{other_discord_data.content}]({other_discord_data.jump_url})")
         embed.set_footer(icon_url="https://avatars.githubusercontent.com/u/58365715",

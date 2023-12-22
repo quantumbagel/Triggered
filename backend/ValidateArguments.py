@@ -18,20 +18,26 @@ def is_trigger_valid(variables: dict, trigger: str, requirements: dict):
     return True, ""
 
 
-def is_do_valid(variables: dict, do: str, requirements: dict):
+def is_do_valid(variables: dict, do: str, requirements: dict, trigger_type: str):
     """
     Returns whether this should be allowed
     :param requirements: the do requirements
     :param do: the do action
     :param variables: the variables
+    :param trigger_type: The type of the trigger
     :return: a bool and the reason
     """
-    for param in requirements[do]['params'].keys():
-        if requirements[do]['params'][param]['required'] and variables['do_' + param] is None:
-            return False, f"do_{param} is required and not provided!"
-        if param == 'emoji':
-            if not validate_emoji(variables['trigger_emoji']):
-                return False, "Invalid emoji!"
+    if 'params' in requirements[do].keys():
+        for param in requirements[do]['params'].keys():
+            if requirements[do]['params'][param]['required'] and variables['do_' + param] is None:
+                return False, f"do_{param} is required and not provided!"
+            if param == 'emoji':
+                if not validate_emoji(variables['trigger_emoji']):
+                    return False, "Invalid emoji!"
+    if 'inheritable' in requirements[do].keys() and trigger_type not in requirements[do]['inheritable']:
+        return False, (f"Do cannot inherit from \"{trigger_type}.\"\n"
+                       f"It can only inherit from these types: {','.join(requirements[do]['inheritable'])}")
+
     return True, ""
 
 

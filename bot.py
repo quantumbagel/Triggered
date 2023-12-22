@@ -1,12 +1,15 @@
-# Triggered by @quantumbagel
+# Triggered by @quantumbagel.
+import json
 import logging
 import math
 import sys
-import json
+import time
+
 import discord
 import pymongo.errors
 from discord import app_commands
 from pymongo import MongoClient
+
 from backend import GetTriggerDo, DiscordPickler, ValidateArguments, ValidateConfiguration
 
 logging.getLogger("discord").setLevel(logging.INFO)  # Discord.py logging level - INFO
@@ -56,22 +59,14 @@ valid_configuration, reason = ValidateConfiguration.validate_config(configuratio
 if not valid_configuration:
     log.critical(f"Configuration file (configuration/config.json) is not valid. (reason=\"{reason}\")")
     sys.exit(1)
-log.debug("Succesafully loaded configuration file!")
+log.debug("Successfully loaded configuration file!")
 BOT_SECRET = configuration["bot_secret"]
 MAX_DOS = configuration["max_dos_per_trigger"]
 
 
-class Triggered(discord.Client):  # A simple client
-    def __init__(self):
-        """
-        Initialize the client.
-        """
-        super().__init__(intents=discord.Intents.all())  # discord.py bug, declare intent to be a bot
-
-
 class PaginationView(discord.ui.View):
     current_page: int = 1
-    sep: int = 1
+    sep: int = 3
 
     def __init__(self, timeout=None, title="", data: list[dict[str, str]] = None, author: discord.Member = None):
         """
@@ -219,7 +214,7 @@ for defined_do in DO_REQUIREMENTS.keys():
     dropdown_key = DO_REQUIREMENTS[defined_do]['class']().dropdown_name()
     DO_OPTIONS.append(app_commands.Choice(name=dropdown_key, value=defined_do))
 log.debug("Successfully built Options/Requirements!")
-client = Triggered()
+client = discord.Client(intents=discord.Intents.all())
 tree = app_commands.CommandTree(client)  # Build command tree
 db_client = MongoClient(host=configuration["mongodb_uri"], serverSelectionTimeoutMS=5000)
 # 5 secs to establish a connection
@@ -250,6 +245,49 @@ def generate_simple_embed(title: str, description: str) -> discord.Embed:
     return embed
 
 
+async def is_allowed(ctx: discord.Interaction, f_log: logging.Logger) -> bool:
+    """
+    Returns if an interaction should be allowed.
+    This checks for:
+    * Bot user
+    * DM
+    * Role permission / positioning if no role set
+    :param ctx: the Interaction to checker
+    :param f_log: the logger
+    :return: true or false
+    """
+    if ctx.user.bot:
+        f_log.warning("Bot users are not allowed to use commands.")
+        return False
+    if str(ctx.channel.type) == "private":  # No DMs - yet
+        f_log.error("Commands don't work in DMs!")
+        embed = generate_simple_embed("Commands don't work in DMs!",
+                                      "Triggered requires a server for its commands to work."
+                                      " Support for some DM commands may come in the future.")
+        await ctx.response.send_message(embed=embed)
+        return False
+    permissions = list(db_client["configuration"][str(ctx.guild.id)].find())
+    role_list = next((item for item in permissions if item['type'] == "role_permission"), None)["value"]
+    decoded_role = await DiscordPickler.decode_object(role_list, ctx.guild)
+    if role_list is None or decoded_role is None:
+        if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
+            f_log.error("User attempted to access with insufficient permission (old method) >:(")
+            embed = generate_simple_embed("Insufficient permission!",
+                                          "Because a permission role has not been set for this server"
+                                          " (or it is invalid),"
+                                          " your highest role must be above mine to use my commands!")
+            await ctx.response.send_message(embed=embed, ephemeral=True)
+            return False
+    elif decoded_role not in ctx.user.roles:
+        f_log.error("User attempted to access with insufficient permission (new method) >:(")
+        embed = generate_simple_embed("Insufficient permission!",
+                                      "Because a permission role has been set for this server,"
+                                      f" you must have the role {decoded_role.mention}.")
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return False
+    return True
+
+
 @triggered.command(name="new", description="Create a trigger."
                                            " All optional arguments are dependent"
                                            " on the type of trigger that you choose.")
@@ -274,24 +312,8 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
     """
     f_log = log.getChild("bot.new")
 
-    # Bot check
-    if ctx.user.bot:
-        f_log.error("User is a bot >>>:(")
-        return
-    if str(ctx.channel.type) == "private":  # No DMs - yet
-        f_log.error("Commands don't work in DMs!")
-        embed = generate_simple_embed("Commands don't work in DMs!",
-                                      "Triggered requires a server for its commands to work."
-                                      " Support for some DM commands may come in the future.")
-        await ctx.response.send_message(embed=embed)
-        return
-
-    # Ensure permissions
-    if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
-        f_log.error("User attempted to access with insufficient permission >:(")
-        embed = generate_simple_embed("Insufficient permission!",
-                                      "Your highest role must be above mine to use my commands!")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
+    # Validate
+    if not await is_allowed(ctx, f_log):
         return
 
     max_length = configuration['argument_length_limit']
@@ -348,6 +370,8 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
         {"type": "meta", "author": await DiscordPickler.encode_object(ctx.user)})
     watching_commands_access[str(ctx.guild.id)][name].insert_one(
         {"type": "tracker"})
+    watching_commands_access[str(ctx.guild.id)][name].insert_one(
+        {"type": "last_exec", "value": "This trigger has not been activated yet."})
     embed = generate_simple_embed(f"Trigger \"{name}\" created!", "Way to go!")
     await ctx.response.send_message(embed=embed, ephemeral=True)
 
@@ -376,24 +400,10 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
     """
     f_log = log.getChild("add")
     # Bot check
-    if ctx.user.bot:
-        f_log.error("User is a bot >>>:(")
-        return
 
-    if str(ctx.channel.type) == "private":  # No DMs - yet
-        f_log.error("Commands don't work in DMs!")
-        embed = generate_simple_embed("Commands don't work in DMs!",
-                                      "Triggered requires a server for its commands to work."
-                                      " Support for some DM commands may come in the future.")
-        await ctx.response.send_message(embed=embed)
-        return
+    # Validate
 
-    # Ensure permissions
-    if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
-        f_log.error("User attempted to access with insufficient permission >:(")
-        embed = generate_simple_embed("Insufficient permission!",
-                                      "Your highest role must be above mine to use my commands!")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
+    if not await is_allowed(ctx, f_log):
         return
 
     # Length verification
@@ -426,15 +436,20 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
         await ctx.response.send_message(embed=embed, ephemeral=True)
         return
 
+    # Get the type of the trigger
+    trigger_type = TRIGGER_REQUIREMENTS[dict(watching_commands_access[str(ctx.guild.id)][trigger_name]
+                                             .find_one({"type": "trigger"}, {"_id": False, "type": False}))[
+        "trigger_action_name"]]["type"]
     # Encode variables
     n_var = {}
     for variable in variables.keys():
         n_var[variable] = await DiscordPickler.encode_object(variables[variable])
 
     # Validate variables
-    allowed, res = ValidateArguments.is_do_valid(variables, do.value, DO_REQUIREMENTS)
+    allowed, res = ValidateArguments.is_do_valid(variables, do.value, DO_REQUIREMENTS,
+                                                 trigger_type)
     if not allowed:  # Not valid, exit now
-        f_log.error(f"Failed to validate TRIGGER action (reason=\"{res}\")")
+        f_log.error(f"Failed to validate DO action (reason=\"{res}\")")
         embed = generate_simple_embed("Invalid arguments!",
                                       f"Reason: \"{res}\"")
         await ctx.response.send_message(embed=embed, ephemeral=True)
@@ -450,7 +465,7 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
 
         author_id = int(meta["author"][1])  # Get the author ID
         if ctx.user.id in [author_id, ctx.guild.owner_id]:  # Allow only the owner and the creator to edit
-            if len(num_dos) + 1 > MAX_DOS:
+            if num_dos + 1 > MAX_DOS:
                 f_log.warning("Command full of dos!")
                 embed = generate_simple_embed(f"That trigger (\"{trigger_name}\")"
                                               f" has used all available {MAX_DOS} dos.",
@@ -490,23 +505,11 @@ async def delete(ctx: discord.Interaction, to_delete: app_commands.Choice[str], 
     f_log = log.getChild("delete")
 
     # Bot check
-    if ctx.user.bot:
-        f_log.error("User is a bot >>>:(")
+
+    # Validate
+    if not await is_allowed(ctx, f_log):
         return
-    if str(ctx.channel.type) == "private":  # No DMs - yet
-        f_log.error("Commands don't work in DMs!")
-        embed = generate_simple_embed("Commands don't work in DMs!",
-                                      "Triggered requires a server for its commands to work."
-                                      " Support for some DM commands may come in the future.")
-        await ctx.response.send_message(embed=embed)
-        return
-    if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
-        # Insufficient permissions
-        f_log.error("User attempted to access with insufficient permission >:(")
-        embed = generate_simple_embed("Insufficient permission!",
-                                      "Your highest role must be above mine to use my commands!")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
-        return
+
     valid = [col for col in list(watching_commands_access.list_collection_names()) if
              col.split('.')[0] == str(ctx.guild.id)]
     if str(ctx.guild.id) + '.' + trigger_name not in valid:  # Trigger doesn't exist
@@ -573,31 +576,16 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
     :return: none
     """
     f_log = log.getChild("view")
-    # Bot check
-    if ctx.user.bot:
-        f_log.error("User is a bot >>>:(")
-        return
-    if str(ctx.channel.type) == "private":  # No DMs - yet
-        f_log.error("Commands don't work in DMs!")
-        embed = generate_simple_embed("Commands don't work in DMs!",
-                                      "Triggered requires a server for its commands to work."
-                                      " Support for some DM commands may come in the future.")
-        await ctx.response.send_message(embed=embed)
-        return
 
-    # Ensure permissions
-    if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
-        f_log.error("User attempted to access with insufficient permission >:(")
-        embed = generate_simple_embed("Insufficient permission!",
-                                      "Your highest role must be above mine to use my commands!")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
+    # Validate
+    if not await is_allowed(ctx, f_log):
         return
-
 
     if mode.value in ["search", "view"] and query is None:  # We need a query for certain modes
         f_log.error(f"Query missing for mode {mode.value}!")
         embed = generate_simple_embed(f"Please provide a query for the mode {mode.name}!",
-                                      f"This mode requires an argument (how can you {mode.name.lower()} something without an argument?)")
+                                      f"This mode requires an argument (how can you {mode.name.lower()}"
+                                      f" something without an argument?)")
         await ctx.response.send_message(embed=embed, ephemeral=True)
         return
     valid = [col for col in list(watching_commands_access.list_collection_names()) if
@@ -612,8 +600,8 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
                 {"type": "meta"}, {"_id": False, "type": False}))["author"][1]
             num_dos = list(watching_commands_access[command].find({"type": "do"}, {"_id": False,
                                                                                    "type": False}))
-            trigger_access = dict(watching_commands_access[command].find_one({"type": "trigger"}, {"_id": False,
-                                                                                                   "type": False}))
+            trigger_access = dict(watching_commands_access[command].find_one({"type": "trigger"},
+                                                                             {"_id": False, "type": False}))
             dropdown = TRIGGER_REQUIREMENTS[trigger_access['trigger_action_name']]['class']().dropdown_name()
 
             # Shave an API call
@@ -663,11 +651,13 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
             if mode.value == "search":
                 f_log.debug(f"No search results found for query \"{query}!\"")
                 embed = generate_simple_embed("No search results found!",
-                                              f"It looks like there are no results for your query \"{query}!\"")
+                                              f"It looks like there are no results for your query "
+                                              f"\"{query}!\"")
             elif mode.value == "view-all":
                 f_log.debug(f"No triggers found in server (name=\"{ctx.guild.name},\" id={ctx.guild.id})!")
                 embed = generate_simple_embed("There are no triggers in this server!",
-                                              "There are no triggers set up yet in this server. Be the first one!")
+                                              "There are no triggers set up yet in this server."
+                                              " Be the first one!")
             else:
                 f_log.debug("MA GET THE CAMERA!")
                 embed = generate_simple_embed(title="Failed to process input correctly.",
@@ -675,21 +665,19 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
             await ctx.response.send_message(embed=embed, ephemeral=True)  # Don't bother making a PaginationView
     else:  # We are viewing one command
         if str(ctx.guild.id) + '.' + query not in valid:
-            f_log.error("Trigger \"{query}\" doesn't exist in server (name=\"{ctx.guild.name},\" id={ctx.guild.id})!")
+            f_log.error(f"Trigger \"{query}\" doesn't exist in server (name=\"{ctx.guild.name},\" id={ctx.guild.id})!")
             error_embed = generate_simple_embed(f"That trigger (\"{query}\") doesn't exist in this server!",
                                                 "Check your input.")
             await ctx.response.send_message(embed=error_embed, ephemeral=True)
             return
-        creator_id = dict(watching_commands_access[str(ctx.guild.id) + '.' + query].find_one({"type": "meta"},
-                                                                                             {"_id": False,
-                                                                                              "type": False}))[
-            "author"][1]
-        trigger_access = dict(watching_commands_access[str(ctx.guild.id) + '.' + query].find_one({"type": "trigger"},
-                                                                                                 {"_id": False,
-                                                                                                  "type": False}))
-        tracker_access = dict(watching_commands_access[str(ctx.guild.id) + '.' + query].find_one({"type": "tracker"},
-                                                                                                 {"_id": False,
-                                                                                                  "type": False}))
+        creator_id = dict(watching_commands_access[str(ctx.guild.id) + '.' + query]
+                          .find_one({"type": "meta"}, {"_id": False, "type": False}))["author"][1]
+        trigger_access = dict(watching_commands_access[str(ctx.guild.id) + '.' + query]
+                              .find_one({"type": "trigger"}, {"_id": False, "type": False}))
+        tracker_access = dict(watching_commands_access[str(ctx.guild.id) + '.' + query]
+                              .find_one({"type": "tracker"}, {"_id": False, "type": False}))
+        last_exec = dict(watching_commands_access[str(ctx.guild.id) + '.' + query]
+                         .find_one({"type": "last_exec"}, {"_id": False, "type": False}))["value"]
         num_triggered = len(tracker_access.keys())
         total_triggered = sum(tracker_access.values())
         pluralizer = ["", ""]  # Good grammar
@@ -701,7 +689,15 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
         # Shave an API call
         u = ctx.guild.get_member(creator_id)
         if u is None:
-            u = await client.fetch_user(creator_id)
+            try:
+                u = await client.fetch_user(creator_id)
+                mention = u.mention
+
+            except discord.NotFound:
+                f_log.error("User not found!")
+                mention = "Nonexistent user"
+        else:
+            mention = u.mention
         actions = ''
         # Get the name of the dropdown (for embed)
         dropdown = TRIGGER_REQUIREMENTS[trigger_access['trigger_action_name']]['class']().dropdown_name()
@@ -718,15 +714,59 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
             actions = "There are no dos in this trigger!"
 
         # Create embed with data
-        embed.add_field(name="Created by:", value=u.mention)
+        embed.add_field(name="Created by:", value=mention)
         embed.add_field(name="Trigger type:", value=dropdown)
         embed.add_field(name="Dos:", value=actions, inline=False)
         embed.add_field(name="This trigger was activated:",
                         value=f"{total_triggered} time{pluralizer[0]} across {num_triggered} user{pluralizer[1]}.")
         embed.add_field(name="Description:", value=trigger_access['trigger_description'])
+        embed.add_field(name="Last execution details:", value=last_exec, inline=False)
         embed.set_footer(text="Made with ❤ by @quantumbagel",
                          icon_url="https://avatars.githubusercontent.com/u/58365715")
         await ctx.response.send_message(embed=embed, ephemeral=True)
+
+
+@triggered.command(description="Configure Triggered for this server. Requires the permission \"Administrator.\"")
+@app_commands.rename(role_obj="role")
+async def configure(ctx: discord.Interaction, role_obj: discord.Role = None):
+    """
+    Set the admin role - permission "administrator" is required for the user.
+    :param ctx: the discord.Interaction
+    :param role_obj: The role to be set as the requirement for Triggered.
+    :return: none
+    """
+    variables = {"role": role_obj}
+    f_log = log.getChild("configure")
+    updating = False
+    for var in variables:
+        if var is not None:
+            updating = True
+            break
+    if not updating:
+        log.debug("TODO: Implement print of configuration opts.")  # TODO
+        return
+    if ctx.user.bot:
+        f_log.warning("Bot users are not allowed to use commands.")
+        return
+
+    if ctx.user.guild_permissions.administrator:
+        # Are you an admin? Then, you can set the minimum Triggered role.
+        result = (db_client["configuration"][str(ctx.guild.id)]
+                  .replace_one({"type": "role_permission"},
+                               {"value": await DiscordPickler.encode_object(variables['role']),
+                                "type": "role_permission"}))
+        if result.modified_count == 0:
+            db_client["configuration"][str(ctx.guild.id)].insert_one(
+                {"value": await DiscordPickler.encode_object(variables['role']),
+                 "type": "role_permission"})
+        f_log.info(f"Updated minimum role for server id={ctx.guild.id} to @{variables['role'].name}."
+                   f" This action was authorized by server admin @{ctx.user.name}")
+
+        await ctx.response.send_message(embed=generate_simple_embed("Successfully updated permissions!",
+                                                                    "Make sure to double-check that the new"
+                                                                    " configuration is what you want it to be by "
+                                                                    "running */triggered configure* with no arguments.")
+                                        , ephemeral=True)
 
 
 async def handle(id_type: str, creator: discord.Member = None, guild: discord.Guild = None, other=None):
@@ -742,10 +782,12 @@ async def handle(id_type: str, creator: discord.Member = None, guild: discord.Gu
     if creator.bot:  # Don't allow bots to activate anything
         f_log.debug("Ignoring bot creator.")
         return
-
+    what_happened = {}
     for database_id in [col for col in list(watching_commands_access.list_collection_names()) if
                         col.split('.')[0] == str(guild.id)]:  # Iterate through each command that this guild has
+        start_scan = time.time()
         trigger = database_id.split('.')[1]  # The command name
+        what_happened[database_id] = f"Trigger was activated by user \"{creator.global_name}\" (id={creator.id}).\n"
         trigger_dict = dict(watching_commands_access[str(guild.id)][trigger]
                             .find_one({"type": "trigger"}, {'_id': False, "type": False}))  # Trigger data
         submit_trigger_dict = {}
@@ -753,12 +795,32 @@ async def handle(id_type: str, creator: discord.Member = None, guild: discord.Gu
             submit_trigger_dict.update({item: await DiscordPickler.decode_object(trigger_dict[item], guild)})
         if TRIGGER_REQUIREMENTS[submit_trigger_dict["trigger_action_name"]]["type"] == id_type:
             try:
-                if await (TRIGGER_REQUIREMENTS[submit_trigger_dict["trigger_action_name"]]["class"]
-                        .is_valid(submit_trigger_dict, other)):
+                start_time = time.time()
+                try:
+                    is_valid = await (TRIGGER_REQUIREMENTS[submit_trigger_dict["trigger_action_name"]]["class"]
+                                      .is_valid(submit_trigger_dict, other))
+                except Exception as execution_error:
+                    what_happened[database_id] += \
+                        (f"{TRIGGER_REQUIREMENTS[submit_trigger_dict['trigger_action_name']]['class'].__name__}"
+                         f".is_valid call raised an exception: name={type(execution_error)}, value={execution_error}."
+                         f" Execution time was {time.time() - start_time} before crash.")
+                    continue
+                exec_time = time.time() - start_time
+                if type(is_valid) is not bool:
+                    what_happened[database_id] += (
+                        f"{TRIGGER_REQUIREMENTS[submit_trigger_dict['trigger_action_name']]['class'].__name__}"
+                        f".is_valid() returned a non-bool type. This type was {type(is_valid)}."
+                        f" Arguments passed were submit_trigger_dict={submit_trigger_dict}"
+                        f" and other={other}. Execution time was {exec_time}.")
+                    continue
+                what_happened[database_id] += (f"Successfully checked for is_valid."
+                                               f" Execution time was {exec_time}.\n")
+                if is_valid:
                     watching_commands_access[database_id].update_one({"type": "tracker"},
                                                                      {"$inc": {str(creator.id): 1}})
+                    # The do data from the DB
                     pre_dos = list(watching_commands_access[str(guild.id)][trigger]
-                                   .find({"type": "do"}, {'_id': False, 'type': False}))  # The do data from the DB
+                                   .find({"type": "do"}, {'_id': False, 'type': False}))
 
                     # Decode the "dos" section of the DB
                     submit_dos = []
@@ -777,17 +839,40 @@ async def handle(id_type: str, creator: discord.Member = None, guild: discord.Gu
 
                     submit_tracker = dict(watching_commands_access[str(guild.id)][trigger]
                                           .find_one({"type": "tracker"}, {'_id': False, 'type': False}))
+                    what_happened[database_id] += f"Number of dos to execute: {len(submit_dos)}.\n"
                     for identification in submit_dos:
                         # Compile the data together
                         data = {"do": identification, "dos": submit_dos, "trigger": submit_trigger_dict,
                                 "meta": submit_meta,
                                 "tracker": submit_tracker}
                         # Perform the execution
-                        await (DO_REQUIREMENTS[identification["do_action_name"]]["class"]
-                               .execute(data, client, guild, creator, other_discord_data=other))
+                        try:
+                            start_time = time.time()
+                            await (DO_REQUIREMENTS[identification["do_action_name"]]["class"]
+                                   .execute(data, client, guild, creator, other_discord_data=other))
+                            exec_time = time.time() - start_time
+                            what_happened[database_id] += (
+                                f"{DO_REQUIREMENTS[identification['do_action_name']]['class'].__name__}.execute"
+                                f" completed successfully."
+                                f" Execution time was {exec_time}.\n")
+                        except Exception as execution_error:
+                            what_happened[database_id] += \
+                                (f" {DO_REQUIREMENTS[identification['do_action_name']]['class'].__name__}"
+                                 f".execute call raised an exception: name={type(execution_error)}, value={execution_error}."
+                                 f" Execution time was {time.time() - start_time} before crash.\n")
+                    what_happened[database_id] += (f"Completed trigger \"{trigger}.\""
+                                                   f" Total exec time was {time.time() - start_scan}.\n")
+                    what_happened[database_id] = what_happened[database_id][:-1]  # Remove trailing newline
+                else:
+                    what_happened[database_id] = ""
             except KeyError as ke:
                 f_log.warning(f"Failed is_valid check!\n{ke}")
-                raise ke
+        for wh in what_happened:
+            if what_happened[wh]:
+                result = watching_commands_access[wh].replace_one({"type": "last_exec"},
+                                                                  {"value": what_happened[wh], "type": "last_exec"})
+                if result.modified_count == 0:
+                    watching_commands_access[wh].insert_one({"value": what_happened[wh], "type": "last_exec"})
 
 
 @client.event
@@ -893,6 +978,18 @@ async def on_member_remove(member: discord.Member):
     :return: None
     """
     f_log = log.getChild("event.member_leave")
+    f_log.info(f"Dropping all triggers from user \"{member.name}\" (id={member.id})")
+    valid = [col for col in list(watching_commands_access.list_collection_names()) if
+             col.split('.')[0] == str(member.guild.id)]
+
+    dropped = 0
+    for command_to_remove in valid:
+        if dict(watching_commands_access[command_to_remove]
+                        .find_one({"type": "meta"},
+                                  {"type": False, "_id": False}))["author"][1] == member.guild.id:
+            watching_commands_access.drop_collection(command_to_remove)
+            dropped += 1
+    f_log.info(f"Dropped {dropped} commands.")
     f_log.debug(f'Event "member_leave" has been triggered! (server={member.guild.name}, server_id={member.guild.id},'
                 f' member={member.global_name}, member_id={member.id})')
     await handle("member_leave", member, member.guild)
@@ -953,10 +1050,11 @@ async def on_guild_remove(guild: discord.Guild):
     f_log.info(f"Dropped {len(valid)} commands.")
 
 
-try:
-    tree.add_command(triggered)
-    client.run(BOT_SECRET, log_handler=None)
-except Exception as e:
-    log.critical(f"Critical error: {str(e)}")
-    log.critical("This is likely due to:\n1. Internet issues\n2. Incorrect discord token\n3. Incorrectly set up "
-                 "discord bot")
+if __name__ == "__main__":
+    try:
+        tree.add_command(triggered)
+        client.run(BOT_SECRET, log_handler=None)
+    except Exception as e:
+        log.critical(f"Critical error: {str(e)}")
+        log.critical("This is likely due to:\n1. Internet issues\n2. Incorrect discord token\n3. Incorrectly set up "
+                     "discord bot")

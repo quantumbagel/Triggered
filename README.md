@@ -199,13 +199,16 @@ There are two modes for this command.
 
 * ~~Better in-app help / descriptions of arguments~~
 * ~~Use embeds every time the bot responds~~
-* Multithreading do/trigger execution to prevent malicious code from blocking main thread
-Certain type inheritance for dos
+* Multithreading do/trigger execution to prevent malicious code from blocking main thread (not going to do)
+* ~~Certain type inheritance for dos~~
 * update README with better explanations
 * A "periodic" trigger type that runs every so often
-* Better permission handling than current system
+* ~~Better permission handling than current system~~
+* Dockerfile
+* Complete _/triggered configure_
 * More trigger types (like message-edit or AutoMod related things) (may remove)
-More Dos
+* More Dos
+* Auto-flagging / storage of consistently long-running Triggers/Dos (:/)
 
 
 That's all! :D

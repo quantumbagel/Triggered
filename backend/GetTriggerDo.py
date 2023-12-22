@@ -1,6 +1,5 @@
 import importlib
 import json
-
 import backend.ValidateTriggerDo
 
 

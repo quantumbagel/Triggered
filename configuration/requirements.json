@@ -80,7 +80,9 @@
         "class": "SendDMDo"
     }, "send-message": {
       "params": {"channel": {"required":  true}
-      }, "class": "SendMessageDo"
+      }, "class": "SendMessageDo",
+      "inheritable": ["vc_join"]
+
     }
   }
 }
