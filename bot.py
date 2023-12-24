@@ -61,7 +61,7 @@ if not valid_configuration:
 log.debug("Successfully loaded configuration file!")
 BOT_SECRET = configuration["bot_secret"]
 MAX_DOS = configuration["max_dos_per_trigger"]
-
+IS_ACTIVE = True
 TRIGGER_REQUIREMENTS, DO_REQUIREMENTS = GetTriggerDo.get_trigger_do()
 
 if DO_REQUIREMENTS is None:  # Error has occurred, print and exit
@@ -85,7 +85,6 @@ tree = app_commands.CommandTree(client)  # Build command tree
 db_client = MongoClient(host=configuration["mongodb_uri"], serverSelectionTimeoutMS=5000)
 # 5 secs to establish a connection
 try:
-
     db_client.aprivatein.command('ismaster')
 except pymongo.errors.ServerSelectionTimeoutError:
     log.critical(f"Failed to connect to MongoDB database (uri=\"{configuration['mongodb_uri']}\")")
@@ -122,6 +121,12 @@ async def is_allowed(ctx: discord.Interaction, f_log: logging.Logger) -> bool:
     :param f_log: the logger
     :return: true or false
     """
+    if not IS_ACTIVE:
+        embed = generate_simple_embed("Bot has been disabled!",
+                                      "Triggered has been temporarily disabled by @quantumbagel. This"
+                                      " is likely due to a critical bug being discovered.")
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return False
     if ctx.user.bot:
         f_log.warning("Bot users are not allowed to use commands.")
         return False
@@ -130,27 +135,27 @@ async def is_allowed(ctx: discord.Interaction, f_log: logging.Logger) -> bool:
         embed = generate_simple_embed("Commands don't work in DMs!",
                                       "Triggered requires a server for its commands to work."
                                       " Support for some DM commands may come in the future.")
-        await ctx.response.send_message(embed=embed)
-        return False
-    permissions = list(db_client["configuration"][str(ctx.guild.id)].find())
-    role_list = next((item for item in permissions if item['type'] == "role_permission"), None)["value"]
-    decoded_role = await DiscordPickler.decode_object(role_list, ctx.guild)
-    if role_list is None or decoded_role is None:
-        if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
-            f_log.error("User attempted to access with insufficient permission (old method) >:(")
-            embed = generate_simple_embed("Insufficient permission!",
-                                          "Because a permission role has not been set for this server"
-                                          " (or it is invalid),"
-                                          " your highest role must be above mine to use my commands!")
-            await ctx.response.send_message(embed=embed, ephemeral=True)
-            return False
-    elif decoded_role not in ctx.user.roles:
-        f_log.error("User attempted to access with insufficient permission (new method) >:(")
-        embed = generate_simple_embed("Insufficient permission!",
-                                      "Because a permission role has been set for this server,"
-                                      f" you must have the role {decoded_role.mention}.")
         await ctx.response.send_message(embed=embed, ephemeral=True)
         return False
+    # permissions = list(db_client["configuration"][str(ctx.guild.id)].find())
+    # role_list = next((item for item in permissions if item['type'] == "role_permission"), None)["value"]
+    # decoded_role = await DiscordPickler.decode_object(role_list, ctx.guild)
+    # if role_list is None or decoded_role is None:
+    if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
+        f_log.error("User attempted to access with insufficient permission (old method) >:(")
+        embed = generate_simple_embed("Insufficient permission!",
+                                      "Because a permission role has not been set for this server"
+                                      " (or it is invalid),"
+                                      " your highest role must be above mine to use my commands!")
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return False
+    # elif decoded_role not in ctx.user.roles:
+    #     f_log.error("User attempted to access with insufficient permission (new method) >:(")
+    #     embed = generate_simple_embed("Insufficient permission!",
+    #                                   "Because a permission role has been set for this server,"
+    #                                   f" you must have the role {decoded_role.mention}.")
+    #     await ctx.response.send_message(embed=embed, ephemeral=True)
+    #     return False
     return True
 
 
@@ -609,7 +614,7 @@ async def server_configure(ctx: discord.Interaction, command_mode: app_commands.
                            configuration_option: app_commands.Choice[str], role_obj: discord.Role = None,
                            channel: discord.VoiceChannel | discord.TextChannel = None):
     """
-    Set the admin role - permission "administrator" is required for the user.
+    Set the server permissions - permission "administrator" is required for the user.
     :param command_mode: The mode for the command to function in
     :param configuration_option: Which configuration option to edit/get/update
     :param channel: The channel to add/remove to the white/blacklist
@@ -617,6 +622,12 @@ async def server_configure(ctx: discord.Interaction, command_mode: app_commands.
     :param role_obj: The role to add/remove to the white/blacklist.
     :return: none
     """
+    if not IS_ACTIVE:
+        embed = generate_simple_embed("Bot has been disabled!",
+                                      "Triggered has been temporarily disabled by @quantumbagel."
+                                      " This is likely due to a critical bug being discovered.")
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return
     configuration_dictionary = {"role": False,
                                 "ch_blacklist": True,
                                 "role_blacklist": True}  # Whether each category is a list (True) or not (False)
@@ -639,7 +650,7 @@ async def server_configure(ctx: discord.Interaction, command_mode: app_commands.
         return
 
     # Get the value of the current position, or None if it doesn't exist
-    current_value_dict = (db_client['configuration'][str(ctx.guild.id)]
+    current_value_dict = (db_client['server-configuration'][str(ctx.guild.id)]
                           .find_one({"type": configuration_option.value},
                                     {"type": False, "_id": False}))
     is_blacklist = configuration_dictionary[configuration_option.value]
@@ -661,32 +672,32 @@ async def server_configure(ctx: discord.Interaction, command_mode: app_commands.
             embed = generate_simple_embed(f"That {human_readable_value}"
                                           f" is already a member "
                                           f"of the {mode}!", "Therefore, you don't need to add it!")
-            await ctx.response.send_message(embed=embed)
+            await ctx.response.send_message(embed=embed, ephemeral=True)
             return
         current_value.append(new_addition)
         if exists:
-            (db_client['configuration'][str(ctx.guild.id)]
+            (db_client['server-configuration'][str(ctx.guild.id)]
              .replace_one({"type": configuration_option.value},
                           {"value": current_value, "type": configuration_option.value, "mode": mode}))
         else:
-            db_client['configuration'][str(ctx.guild.id)].insert_one({"type": configuration_option.value,
-                                                                      "value": current_value, "mode": mode})
+            db_client['server-configuration'][str(ctx.guild.id)].insert_one({"type": configuration_option.value,
+                                                                             "value": current_value, "mode": mode})
 
     elif command_mode.value == "update" and not is_blacklist:
         # Case with update, but not blacklist mode (single object)
         new_addition = await DiscordPickler.encode_object(active_variable)
         if current_value_dict is not None:
-            (db_client['configuration'][str(ctx.guild.id)]
+            (db_client['server-configuration'][str(ctx.guild.id)]
              .replace_one({"type": configuration_option.value},
                           {"value": new_addition, "type": configuration_option.value}))
         else:
-            db_client['configuration'][str(ctx.guild.id)].insert_one({"type": configuration_option.value,
-                                                                      "value": new_addition})
+            db_client['server-configuration'][str(ctx.guild.id)].insert_one({"type": configuration_option.value,
+                                                                             "value": new_addition})
 
     elif command_mode.value == "switch" and not is_blacklist:
         # You can't switch a non-blacklist mode!
-        embed = generate_simple_embed("You can't switch white/blacklist on a non white-blacklist!",
-                                      "Use a blacklist (like Role White/Blacklist)")
+        embed = generate_simple_embed("You can't switch white/blacklist on a non white/blacklist!",
+                                      "Use a list (like Role White/Blacklist)")
         await ctx.response.send_message(embed=embed)
 
     elif command_mode.value == "switch" and is_blacklist:
@@ -696,45 +707,54 @@ async def server_configure(ctx: discord.Interaction, command_mode: app_commands.
                 mode = "whitelist"
             else:
                 mode = "blacklist"
-            (db_client['configuration'][str(ctx.guild.id)]
+            (db_client['server-configuration'][str(ctx.guild.id)]
              .replace_one({"type": configuration_option.value},
                           {"type": configuration_option.value, "mode": mode,
                            "value": current_value_dict["value"]}))
         else:
-            db_client['configuration'][str(ctx.guild.id)].insert_one({"type": configuration_option.value,
-                                                                      "mode": "blacklist", "value": []})
+            db_client['server-configuration'][str(ctx.guild.id)].insert_one({"type": configuration_option.value,
+                                                                             "mode": "blacklist", "value": []})
 
     elif command_mode.value == "get" and is_blacklist:
         # Get a blacklist
         embed = generate_simple_embed(title=f"Viewing permission \"{configuration_option.name}\"", description="")
         all_permissions = ""
         v_permissions = []
-        for item in current_value_dict["value"]:
-            try:
-                decoded = await DiscordPickler.decode_object(item, ctx.guild)
-                v_permissions.append(item)
-                all_permissions += ":arrow_right:   " + decoded.mention + "\n"
-            except discord.NotFound:
-                continue
+        if current_value_dict is not None:
+            mode = current_value_dict["mode"]
+            for item in current_value_dict["value"]:
+                try:
+                    decoded = await DiscordPickler.decode_object(item, ctx.guild)
+                    v_permissions.append(item)
+                    all_permissions += ":arrow_right:   " + decoded.mention + "\n"
+                except discord.NotFound:
+                    continue
+        else:
+            mode = "Blacklist"  # Server default is blacklist
         if all_permissions:
             all_permissions = all_permissions[:-1]
         else:
             all_permissions = "None"
         embed.add_field(name="Items in permission:", value=all_permissions)
-        embed.add_field(name="Mode:", value=current_value_dict["mode"].capitalize())
-        await ctx.response.send_message(embed=embed)
+        embed.add_field(name="Mode:", value=mode.capitalize())
+        await ctx.response.send_message(embed=embed, ephemeral=True)
         return  # Don't call response.send_message twice
 
     elif command_mode.value == "get" and not is_blacklist:
         # Get a single value
         if current_value_dict is not None:
             current_value_dict = dict(current_value_dict)
+            decoded = await DiscordPickler.decode_object(current_value_dict["value"], ctx.guild)
+            if decoded is None:
+                v = "None"
+            else:
+                v = decoded.mention
             embed = generate_simple_embed(f"Viewing permission \"{configuration_option.name}\"", "")
-            embed.add_field(name="Value:", value=current_value_dict["value"])
+            embed.add_field(name="Value:", value=v)
         else:
             embed = generate_simple_embed(f"Viewing permission \"{configuration_option.name}\"", "")
             embed.add_field(name="Value:", value="None")
-        await ctx.response.send_message(embed=embed)
+        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
 
     elif command_mode.value == "remove" and not is_blacklist:
@@ -742,13 +762,13 @@ async def server_configure(ctx: discord.Interaction, command_mode: app_commands.
         if current_value_dict is None:
             embed = generate_simple_embed(f"This setting is already not set!",
                                           "Therefore, you can't remove it :(")
-            await ctx.response.send_message(embed=embed)
+            await ctx.response.send_message(embed=embed, ephemeral=True)
             return
         else:
-            db_client['configuration'][str(ctx.guild.id)].delete_one({"type": configuration_option.value})
+            db_client['server-configuration'][str(ctx.guild.id)].delete_one({"type": configuration_option.value})
             embed = generate_simple_embed(f"Successfully deleted setting!",
                                           "Thanks for the storage space! :D")
-            await ctx.response.send_message(embed=embed)
+            await ctx.response.send_message(embed=embed, ephemeral=True)
             return
 
     elif command_mode.value == "remove" and is_blacklist:
@@ -756,21 +776,21 @@ async def server_configure(ctx: discord.Interaction, command_mode: app_commands.
             if current_value_dict is None:
                 embed = generate_simple_embed(f"There is no white/blacklist present here!",
                                               "Therefore, you can't remove it :(")
-                await ctx.response.send_message(embed=embed)
+                await ctx.response.send_message(embed=embed, ephemeral=True)
                 return
             else:
-                db_client['configuration'][str(ctx.guild.id)].delete_one({"type": configuration_option.value})
+                db_client['server-configuration'][str(ctx.guild.id)].delete_one({"type": configuration_option.value})
                 embed = generate_simple_embed(f"Successfully deleted {current_value_dict['mode']}"
                                               f" \"{configuration_option.name}!\"",
                                               "Thanks for the storage space! :D")
-                await ctx.response.send_message(embed=embed)
+                await ctx.response.send_message(embed=embed, ephemeral=True)
                 return
         else:
             # Remove a single value from a white/blacklist
             if current_value_dict is None:  # If setting isn't set, you can't use it anyway
                 embed = generate_simple_embed(f"This setting is already not set!",
                                               "Therefore, you can't remove it :(")
-                await ctx.response.send_message(embed=embed)
+                await ctx.response.send_message(embed=embed, ephemeral=True)
                 return
             else:
                 current_value_dict = dict(current_value_dict)
@@ -779,7 +799,7 @@ async def server_configure(ctx: discord.Interaction, command_mode: app_commands.
                     new_value = current_value_dict["value"]  # Obtain the existing list
                     new_value.remove(encoded_object)  # Remove current value
                     # Replace value vvv
-                    (db_client['configuration'][str(ctx.guild.id)]
+                    (db_client['server-configuration'][str(ctx.guild.id)]
                      .replace_one({"type": configuration_option.value},
                                   {"type": configuration_option.value,
                                    "mode": current_value_dict["mode"],
@@ -788,20 +808,226 @@ async def server_configure(ctx: discord.Interaction, command_mode: app_commands.
                                                   f" {active_variable.mention}"
                                                   f" from {current_value_dict['mode']}!",
                                                   "Thanks for the storage space! :D")
-                    await ctx.response.send_message(embed=embed)
+                    await ctx.response.send_message(embed=embed, ephemeral=True)
                     return
                 else:  # We don't have that in the white/blacklist, so we don't need to do
                     embed = generate_simple_embed(f"That {human_readable_value}"
                                                   f" wasn't in the {current_value_dict['mode']} anyway!",
                                                   "Therefore, it wasn't deleted.")
-                    await ctx.response.send_message(embed=embed)
+                    await ctx.response.send_message(embed=embed, ephemeral=True)
                     return
 
     # If we are here, we can say "Updated permissions"
     await ctx.response.send_message(embed=generate_simple_embed("Successfully updated permissions!",
                                                                 "Make sure to double-check that the new"
                                                                 " configuration is what you want it to be by "
-                                                                "using */triggered configure Get*."),
+                                                                "using */triggered server-configure Get*."),
+                                    ephemeral=True)
+
+
+@triggered.command(name="user-configure", description="Configure Triggered for yourself!")
+@app_commands.rename(command_mode="mode")
+@app_commands.choices(command_mode=[app_commands.Choice(name="Get", value="get"),
+                                    app_commands.Choice(name="Set/Add", value="update"),
+                                    app_commands.Choice(name="Remove", value="remove")],
+                      configuration_option=[app_commands.Choice(name="Default Usability", value='usability'),
+                                            app_commands.Choice(name="User Whitelist/Blacklist",
+                                                                value='user_blacklist')],
+
+                      usability=[app_commands.Choice(name="Not Allowed", value="no"),
+                                 app_commands.Choice(name="Allowed", value="yes")]
+                      )
+async def user_configure(ctx: discord.Interaction, command_mode: app_commands.Choice[str],
+                         configuration_option: app_commands.Choice[str], user: discord.Member = None,
+                         usability: app_commands.Choice[str] = None):
+    """
+    Configures user settings.
+    :param ctx: The discord.Interaction
+    :param command_mode: The mode for the command to function in
+    :param configuration_option: Which configuration option to edit/get/update
+    :param user: The user to update/remove
+    :param usability: The mode of the usability
+    :return: none
+    """
+    if not IS_ACTIVE:
+        embed = generate_simple_embed("Bot has been disabled!",
+                                      "Triggered has been temporarily disabled by @quantumbagel."
+                                      " This is likely due to a critical bug being discovered.")
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return
+    f_log = log.getChild("server-configure")
+
+    if ctx.user.bot:  # I really don't want bots to use this
+        f_log.warning("Bot users are not allowed to use commands.")
+        return
+
+    if not ctx.user.guild_permissions.administrator:  # If you aren't admin, you can't use this command. Period.
+        await ctx.response.send_message(embed=generate_simple_embed("Insufficient permissions!",
+                                                                    "You must have the permission"
+                                                                    " \"Administrator\" in this server"
+                                                                    "to use this command."),
+                                        ephemeral=True)
+        return
+
+    # Get the value of the current position, or None if it doesn't exist
+    current_value_dict = (db_client['user-configuration'][str(ctx.guild.id)]
+                          .find_one({"type": configuration_option.value},
+                                    {"type": False, "_id": False}))
+    transformation = {"yes": "Allowed", "no": "Not Allowed"}
+    if configuration_option.value == "usability":
+        is_blacklist = False
+        human_readable_value = "mode"
+        if usability is not None:
+            active_variable = usability.value
+        else:
+            active_variable = None
+    else:
+        is_blacklist = True
+        human_readable_value = "user"
+        active_variable = user
+
+    if command_mode.value == "update" and is_blacklist:  # Case with update, and blacklist mode
+        if current_value_dict is not None:
+            current_value_dict = dict(current_value_dict)
+            current_value = current_value_dict["value"]
+            mode = current_value_dict["mode"]
+            exists = True
+        else:
+            current_value = []
+            mode = "blacklist"
+            exists = False
+        new_addition = await DiscordPickler.encode_object(active_variable)
+        if new_addition in current_value:
+            embed = generate_simple_embed(f"That {human_readable_value}"
+                                          f" is already a member "
+                                          f"of the {mode}!", "Therefore, you don't need to add it!")
+            await ctx.response.send_message(embed=embed, ephemeral=True)
+            return
+        current_value.append(new_addition)
+        if exists:
+            (db_client['user-configuration'][str(ctx.guild.id)]
+             .replace_one({"type": configuration_option.value},
+                          {"value": current_value, "type": configuration_option.value, "mode": mode}))
+        else:
+            db_client['user-configuration'][str(ctx.guild.id)].insert_one({"type": configuration_option.value,
+                                                                           "value": current_value, "mode": mode})
+
+    elif command_mode.value == "update" and not is_blacklist:
+        # Case with update, but not blacklist mode (single object)
+        if current_value_dict is not None:
+            (db_client['user-configuration'][str(ctx.guild.id)]
+             .replace_one({"type": configuration_option.value},
+                          {"value": active_variable, "type": configuration_option.value}))
+        else:
+            db_client['user-configuration'][str(ctx.guild.id)].insert_one({"type": configuration_option.value,
+                                                                           "value": active_variable})
+
+    elif command_mode.value == "get" and is_blacklist:
+        # Get a blacklist
+        embed = generate_simple_embed(title=f"Viewing permission \"{configuration_option.name}\"", description="")
+        all_permissions = ""
+        v_permissions = []
+        if current_value_dict is not None:
+            mode = current_value_dict["mode"]
+            for item in current_value_dict["value"]:
+                try:
+                    decoded = await DiscordPickler.decode_object(item, ctx.guild)
+                    v_permissions.append(item)
+                    all_permissions += ":arrow_right:   " + decoded.mention + "\n"
+                except discord.NotFound:
+                    continue
+        else:
+            mode = "Whitelist"  # Default for user is whitelist
+        if all_permissions:
+            all_permissions = all_permissions[:-1]
+        else:
+            all_permissions = "None"
+        embed.add_field(name="Items in permission:", value=all_permissions)
+        embed.add_field(name="Mode:", value=mode.capitalize())
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return  # Don't call response.send_message twice
+
+    elif command_mode.value == "get" and not is_blacklist:
+        # Get a single value
+        if current_value_dict is not None:
+            current_value_dict = dict(current_value_dict)
+            try:
+                embed = generate_simple_embed(f"Viewing permission \"{configuration_option.name}\"", "")
+                embed.add_field(name="Value:", value=transformation[current_value_dict["value"]])
+            except KeyError:
+                embed = generate_simple_embed(f"Viewing permission \"{configuration_option.name}\"", "")
+                embed.add_field(name="Value:", value="None")
+        else:
+            embed = generate_simple_embed(f"Viewing permission \"{configuration_option.name}\"", "")
+            embed.add_field(name="Value:", value="None")
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    elif command_mode.value == "remove" and not is_blacklist:
+        # Remove a single value
+        if current_value_dict is None:
+            embed = generate_simple_embed(f"This setting is already not set!",
+                                          "Therefore, you can't remove it :(")
+            await ctx.response.send_message(embed=embed, ephemeral=True)
+            return
+        else:
+            db_client['user-configuration'][str(ctx.guild.id)].delete_one({"type": configuration_option.value})
+            embed = generate_simple_embed(f"Successfully deleted setting!",
+                                          "Thanks for the storage space! :D")
+            await ctx.response.send_message(embed=embed, ephemeral=True)
+            return
+
+    elif command_mode.value == "remove" and is_blacklist:
+        if active_variable is None:  # Delete the *entire* list
+            if current_value_dict is None:
+                embed = generate_simple_embed(f"There is no white/blacklist present here!",
+                                              "Therefore, you can't remove it :(")
+                await ctx.response.send_message(embed=embed, ephemeral=True)
+                return
+            else:
+                db_client['user-configuration'][str(ctx.guild.id)].delete_one({"type": configuration_option.value})
+                embed = generate_simple_embed(f"Successfully deleted {current_value_dict['mode']}"
+                                              f" \"{configuration_option.name}!\"",
+                                              "Thanks for the storage space! :D")
+                await ctx.response.send_message(embed=embed, ephemeral=True)
+                return
+        else:
+            # Remove a single value from a white/blacklist
+            if current_value_dict is None:  # If setting isn't set, you can't use it anyway
+                embed = generate_simple_embed(f"This setting is already not set!",
+                                              "Therefore, you can't remove it :(")
+                await ctx.response.send_message(embed=embed, ephemeral=True)
+                return
+            else:
+                current_value_dict = dict(current_value_dict)
+                encoded_object = await DiscordPickler.encode_object(active_variable)
+                if encoded_object in current_value_dict["value"]:  # If the item is in the white/blacklist
+                    new_value = current_value_dict["value"]  # Obtain the existing list
+                    new_value.remove(encoded_object)  # Remove current value
+                    # Replace value vvv
+                    (db_client['user-configuration'][str(ctx.guild.id)]
+                     .replace_one({"type": configuration_option.value},
+                                  {"type": configuration_option.value,
+                                   "mode": current_value_dict["mode"],
+                                   "value": new_value}))
+                    embed = generate_simple_embed(f"Successfully deleted item"
+                                                  f" {active_variable.mention}"
+                                                  f" from {current_value_dict['mode']}!",
+                                                  "Thanks for the storage space! :D")
+                    await ctx.response.send_message(embed=embed, ephemeral=True)
+                    return
+                else:  # We don't have that in the white/blacklist, so we don't need to do
+                    embed = generate_simple_embed(f"That {human_readable_value}"
+                                                  f" wasn't in the {current_value_dict['mode']} anyway!",
+                                                  "Therefore, it wasn't deleted.")
+                    await ctx.response.send_message(embed=embed, ephemeral=True)
+                    return
+
+        # If we are here, we can say "Updated permissions"
+    await ctx.response.send_message(embed=generate_simple_embed("Successfully updated permissions!",
+                                                                "Make sure to double-check that the new"
+                                                                " configuration is what you want it to be by "
+                                                                "using */triggered server-configure Get*."),
                                     ephemeral=True)
 
 
@@ -918,6 +1144,7 @@ async def on_message(msg: discord.Message):
     :param msg: The message
     :return: None
     """
+    global IS_ACTIVE
     f_log = log.getChild("event.on_message")
     # Message synchronization command
     if msg.content.startswith("triggered/sync") and msg.author.id == configuration["owner_id"]:  # Perform sync
@@ -933,6 +1160,31 @@ async def on_message(msg: discord.Message):
             await tree.sync(guild=g)
         f_log.info("Performed authorized sync.")
         await msg.add_reaction("✅")  # leave confirmation
+        return
+    elif msg.content == "triggered/disable" and msg.author.id == configuration["owner_id"]:  # Disable bot
+        if not IS_ACTIVE:
+            await msg.add_reaction("⛔")  # Don't need to disable
+            return
+        IS_ACTIVE = False
+        f_log.critical("BOT HAS BEEN DISABLED!")
+        await msg.add_reaction("✅")  # leave confirmation
+        return
+    elif msg.content == "triggered/enable" and msg.author.id == configuration["owner_id"]:  # Enable bot
+        if IS_ACTIVE:
+            await msg.add_reaction("⛔")  # Don't need to disable
+            return
+        IS_ACTIVE = True
+        f_log.critical("BOT HAS BEEN ENABLED!")
+        await msg.add_reaction("✅")  # leave confirmation
+        return
+    elif msg.content == "triggered/toggle" and msg.author.id == configuration["owner_id"]:  # Toggle bot
+        IS_ACTIVE = not IS_ACTIVE
+        if IS_ACTIVE:
+            f_log.critical("BOT HAS BEEN ENABLED (TOGGLE)!")
+            await msg.add_reaction("✅")  # leave confirmation
+        else:
+            f_log.critical("BOT HAS BEEN DISABLED (TOGGLE)!")
+            await msg.add_reaction("⛔")
         return
     if msg.guild is None:
         return
