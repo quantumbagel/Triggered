@@ -1,7 +1,6 @@
 # Triggered by @quantumbagel.
 import json
 import logging
-import math
 import sys
 import time
 
@@ -10,7 +9,7 @@ import pymongo.errors
 from discord import app_commands
 from pymongo import MongoClient
 
-from backend import GetTriggerDo, DiscordPickler, ValidateArguments, ValidateConfiguration
+from backend import GetTriggerDo, DiscordPickler, ValidateArguments, ValidateConfiguration, PaginationView
 
 logging.getLogger("discord").setLevel(logging.INFO)  # Discord.py logging level - INFO
 logging.basicConfig(level=logging.DEBUG)
@@ -62,139 +61,6 @@ if not valid_configuration:
 log.debug("Successfully loaded configuration file!")
 BOT_SECRET = configuration["bot_secret"]
 MAX_DOS = configuration["max_dos_per_trigger"]
-
-
-class PaginationView(discord.ui.View):
-    current_page: int = 1
-    sep: int = 3
-
-    def __init__(self, timeout=None, title="", data: list[dict[str, str]] = None, author: discord.Member = None):
-        """
-        Initialize a PaginationView
-        :param timeout: the timeout (honestly not sure lol)
-        :param title: The title of the View
-        """
-        super().__init__(timeout=timeout)
-        self.title = title
-        self.author = author
-        self.data = data
-        self.message = None
-        self.logger = log.getChild("pview")
-
-    async def send(self, ctx: discord.Interaction):
-        """
-        Send the view in a message
-        :param ctx: the Interaction
-        :return:
-        """
-        try:
-            await ctx.response.send_message(view=self)
-        except discord.NotFound:
-            (self.logger.getChild("send")
-             .error("Unknown interaction! This is probably due to the bot just coming back online."))
-            return  # Fail the interaction
-        self.message = await ctx.original_response()
-        await self.update_message(self.data[:self.sep])
-
-    def create_embed(self, data):
-        """
-        Generate the embed with per-page data
-        :param data: the data to parse
-        :return: the embed
-        """
-        embed = discord.Embed(title=f"{self.title} (page {self.current_page}/{math.ceil(len(self.data) / self.sep)})",
-                              color=EMBED_COLOR)
-
-        for item in data:
-            embed.add_field(name=item['title'], value=item['subtitle'], inline=False)
-            embed.add_field(name="Dos", value=item['dos_subtitle'])
-            embed.add_field(name="Trigger Name", value=item['trigger_type'])
-        embed.set_footer(text="Made with ❤ by @quantumbagel",
-                         icon_url="https://avatars.githubusercontent.com/u/58365715")
-        return embed
-
-    async def update_message(self, data):
-        """
-        Update the message (on button click)
-        :param data: the data
-        :return: none
-        """
-        self.update_buttons()
-        await self.message.edit(embed=self.create_embed(data), view=self)
-        self.logger.getChild("update_message").debug("Successfully updated existing interaction!")
-
-    def update_buttons(self):
-        """
-        Update the color and usability of the buttons depending on the current page.
-        :return: none
-        """
-        if self.current_page == 1:
-            self.first_page_button.disabled = True
-            self.prev_button.disabled = True
-            self.first_page_button.style = discord.ButtonStyle.gray
-            self.prev_button.style = discord.ButtonStyle.gray
-        else:
-            self.first_page_button.disabled = False
-            self.prev_button.disabled = False
-            self.first_page_button.style = discord.ButtonStyle.green
-            self.prev_button.style = discord.ButtonStyle.primary
-
-        if self.current_page == math.ceil(len(self.data) / self.sep):
-            self.next_button.disabled = True
-            self.last_page_button.disabled = True
-            self.last_page_button.style = discord.ButtonStyle.gray
-            self.next_button.style = discord.ButtonStyle.gray
-        else:
-            self.next_button.disabled = False
-            self.last_page_button.disabled = False
-            self.last_page_button.style = discord.ButtonStyle.green
-            self.next_button.style = discord.ButtonStyle.primary
-
-    def get_current_page_data(self):
-        until_item = self.current_page * self.sep
-        from_item = until_item - self.sep
-        if not self.current_page == 1:
-            from_item = 0
-            until_item = self.sep
-        if self.current_page == math.ceil(len(self.data) / self.sep):
-            from_item = self.current_page * self.sep - self.sep
-            until_item = len(self.data)
-        return self.data[from_item:until_item]
-
-    # These are the buttons and what they do.
-
-    @discord.ui.button(emoji="⏮",
-                       style=discord.ButtonStyle.green)
-    async def first_page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id == self.author.id:
-            await interaction.response.defer()
-            self.current_page = 1
-            await self.update_message(self.get_current_page_data())
-
-    @discord.ui.button(emoji="⬅",
-                       style=discord.ButtonStyle.primary)
-    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id == self.author.id:
-            await interaction.response.defer()
-            self.current_page -= 1
-            await self.update_message(self.get_current_page_data())
-
-    @discord.ui.button(emoji="➡",
-                       style=discord.ButtonStyle.primary)
-    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id == self.author.id:
-            await interaction.response.defer()
-            self.current_page += 1
-            await self.update_message(self.get_current_page_data())
-
-    @discord.ui.button(emoji="⏭",
-                       style=discord.ButtonStyle.green)
-    async def last_page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id == self.author.id:
-            await interaction.response.defer()
-            self.current_page = math.ceil(len(self.data) / self.sep)
-            await self.update_message(self.get_current_page_data())
-
 
 TRIGGER_REQUIREMENTS, DO_REQUIREMENTS = GetTriggerDo.get_trigger_do()
 
@@ -645,7 +511,8 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
             else:
                 title_to_use = "Title Processing Error"
 
-            pagination_view = PaginationView(timeout=None, title=title_to_use, data=data, author=ctx.user)
+            pagination_view = (PaginationView.PaginationView
+                               (timeout=None, title=title_to_use, data=data, author=ctx.user, embed_color=EMBED_COLOR))
             await pagination_view.send(ctx)
         else:  # There's no search results (or no triggers)
             if mode.value == "search":
@@ -726,52 +593,221 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
         await ctx.response.send_message(embed=embed, ephemeral=True)
 
 
-@triggered.command(description="Configure Triggered for this server. Requires the permission \"Administrator.\"")
-@app_commands.rename(role_obj="role")
-async def configure(ctx: discord.Interaction, role_obj: discord.Role = None):
+@triggered.command(name="server-configure",
+                   description="Configure Triggered for this server. Requires the permission \"Administrator.\"")
+@app_commands.rename(role_obj="role", command_mode="mode")
+@app_commands.choices(command_mode=[app_commands.Choice(name="Get", value="get"),
+                                    app_commands.Choice(name="Set/Add", value="update"),
+                                    app_commands.Choice(name="Remove", value="remove"),
+                                    app_commands.Choice(name="Switch Whitelist/Blacklist", value="switch")],
+                      configuration_option=[app_commands.Choice(name="Required Role", value='role'),
+                                            app_commands.Choice(name="Channel Whitelist/Blacklist (text/voice)",
+                                                                value='ch_blacklist'),
+                                            app_commands.Choice(name="Role Whitelist/Blacklist",
+                                                                value='role_blacklist')])
+async def server_configure(ctx: discord.Interaction, command_mode: app_commands.Choice[str],
+                           configuration_option: app_commands.Choice[str], role_obj: discord.Role = None,
+                           channel: discord.VoiceChannel | discord.TextChannel = None):
     """
     Set the admin role - permission "administrator" is required for the user.
+    :param command_mode: The mode for the command to function in
+    :param configuration_option: Which configuration option to edit/get/update
+    :param channel: The channel to add/remove to the white/blacklist
     :param ctx: the discord.Interaction
-    :param role_obj: The role to be set as the requirement for Triggered.
+    :param role_obj: The role to add/remove to the white/blacklist.
     :return: none
     """
-    variables = {"role": role_obj}
-    f_log = log.getChild("configure")
-    updating = False
-    for var in variables:
-        if var is not None:
-            updating = True
-            break
-    if not updating:
-        log.debug("TODO: Implement print of configuration opts.")  # TODO
-        return
-    if ctx.user.bot:
+    configuration_dictionary = {"role": False,
+                                "ch_blacklist": True,
+                                "role_blacklist": True}  # Whether each category is a list (True) or not (False)
+    # Index each parameter for dynamic access
+    variables = {"role": role_obj, "ch_blacklist": channel, "role_blacklist": role_obj}
+    # Get the type each parameter is using
+    human_readable = {"role": "role", "ch_blacklist": "channel", "role_blacklist": "role"}
+    f_log = log.getChild("server-configure")
+
+    if ctx.user.bot:  # I really don't want bots to use this
         f_log.warning("Bot users are not allowed to use commands.")
         return
 
-    if ctx.user.guild_permissions.administrator:
-        # Are you an admin? Then, you can set the minimum Triggered role.
-        result = (db_client["configuration"][str(ctx.guild.id)]
-                  .replace_one({"type": "role_permission"},
-                               {"value": await DiscordPickler.encode_object(variables['role']),
-                                "type": "role_permission"}))
-        if result.modified_count == 0:
-            db_client["configuration"][str(ctx.guild.id)].insert_one(
-                {"value": await DiscordPickler.encode_object(variables['role']),
-                 "type": "role_permission"})
-        f_log.info(f"Updated minimum role for server id={ctx.guild.id} to @{variables['role'].name}."
-                   f" This action was authorized by server admin @{ctx.user.name}")
+    if not ctx.user.guild_permissions.administrator:  # If you aren't admin, you can't use this command. Period.
+        await ctx.response.send_message(embed=generate_simple_embed("Insufficient permissions!",
+                                                                    "You must have the permission"
+                                                                    " \"Administrator\" in this server"
+                                                                    "to use this command."),
+                                        ephemeral=True)
+        return
 
-        await ctx.response.send_message(embed=generate_simple_embed("Successfully updated permissions!",
-                                                                    "Make sure to double-check that the new"
-                                                                    " configuration is what you want it to be by "
-                                                                    "running */triggered configure* with no arguments.")
-                                        , ephemeral=True)
+    # Get the value of the current position, or None if it doesn't exist
+    current_value_dict = (db_client['configuration'][str(ctx.guild.id)]
+                          .find_one({"type": configuration_option.value},
+                                    {"type": False, "_id": False}))
+    is_blacklist = configuration_dictionary[configuration_option.value]
+    human_readable_value = human_readable[configuration_option.value]
+    active_variable = variables[configuration_option.value]
+
+    if command_mode.value == "update" and is_blacklist:  # Case with update, and blacklist mode
+        if current_value_dict is not None:
+            current_value_dict = dict(current_value_dict)
+            current_value = current_value_dict["value"]
+            mode = current_value_dict["mode"]
+            exists = True
+        else:
+            current_value = []
+            mode = "blacklist"
+            exists = False
+        new_addition = await DiscordPickler.encode_object(active_variable)
+        if new_addition in current_value:
+            embed = generate_simple_embed(f"That {human_readable_value}"
+                                          f" is already a member "
+                                          f"of the {mode}!", "Therefore, you don't need to add it!")
+            await ctx.response.send_message(embed=embed)
+            return
+        current_value.append(new_addition)
+        if exists:
+            (db_client['configuration'][str(ctx.guild.id)]
+             .replace_one({"type": configuration_option.value},
+                          {"value": current_value, "type": configuration_option.value, "mode": mode}))
+        else:
+            db_client['configuration'][str(ctx.guild.id)].insert_one({"type": configuration_option.value,
+                                                                      "value": current_value, "mode": mode})
+
+    elif command_mode.value == "update" and not is_blacklist:
+        # Case with update, but not blacklist mode (single object)
+        new_addition = await DiscordPickler.encode_object(active_variable)
+        if current_value_dict is not None:
+            (db_client['configuration'][str(ctx.guild.id)]
+             .replace_one({"type": configuration_option.value},
+                          {"value": new_addition, "type": configuration_option.value}))
+        else:
+            db_client['configuration'][str(ctx.guild.id)].insert_one({"type": configuration_option.value,
+                                                                      "value": new_addition})
+
+    elif command_mode.value == "switch" and not is_blacklist:
+        # You can't switch a non-blacklist mode!
+        embed = generate_simple_embed("You can't switch white/blacklist on a non white-blacklist!",
+                                      "Use a blacklist (like Role White/Blacklist)")
+        await ctx.response.send_message(embed=embed)
+
+    elif command_mode.value == "switch" and is_blacklist:
+        # You can switch a white/blacklist
+        if current_value_dict is not None:
+            if current_value_dict["mode"] == "blacklist":
+                mode = "whitelist"
+            else:
+                mode = "blacklist"
+            (db_client['configuration'][str(ctx.guild.id)]
+             .replace_one({"type": configuration_option.value},
+                          {"type": configuration_option.value, "mode": mode,
+                           "value": current_value_dict["value"]}))
+        else:
+            db_client['configuration'][str(ctx.guild.id)].insert_one({"type": configuration_option.value,
+                                                                      "mode": "blacklist", "value": []})
+
+    elif command_mode.value == "get" and is_blacklist:
+        # Get a blacklist
+        embed = generate_simple_embed(title=f"Viewing permission \"{configuration_option.name}\"", description="")
+        all_permissions = ""
+        v_permissions = []
+        for item in current_value_dict["value"]:
+            try:
+                decoded = await DiscordPickler.decode_object(item, ctx.guild)
+                v_permissions.append(item)
+                all_permissions += ":arrow_right:   " + decoded.mention + "\n"
+            except discord.NotFound:
+                continue
+        if all_permissions:
+            all_permissions = all_permissions[:-1]
+        else:
+            all_permissions = "None"
+        embed.add_field(name="Items in permission:", value=all_permissions)
+        embed.add_field(name="Mode:", value=current_value_dict["mode"].capitalize())
+        await ctx.response.send_message(embed=embed)
+        return  # Don't call response.send_message twice
+
+    elif command_mode.value == "get" and not is_blacklist:
+        # Get a single value
+        if current_value_dict is not None:
+            current_value_dict = dict(current_value_dict)
+            embed = generate_simple_embed(f"Viewing permission \"{configuration_option.name}\"", "")
+            embed.add_field(name="Value:", value=current_value_dict["value"])
+        else:
+            embed = generate_simple_embed(f"Viewing permission \"{configuration_option.name}\"", "")
+            embed.add_field(name="Value:", value="None")
+        await ctx.response.send_message(embed=embed)
+        return
+
+    elif command_mode.value == "remove" and not is_blacklist:
+        # Remove a single value
+        if current_value_dict is None:
+            embed = generate_simple_embed(f"This setting is already not set!",
+                                          "Therefore, you can't remove it :(")
+            await ctx.response.send_message(embed=embed)
+            return
+        else:
+            db_client['configuration'][str(ctx.guild.id)].delete_one({"type": configuration_option.value})
+            embed = generate_simple_embed(f"Successfully deleted setting!",
+                                          "Thanks for the storage space! :D")
+            await ctx.response.send_message(embed=embed)
+            return
+
+    elif command_mode.value == "remove" and is_blacklist:
+        if active_variable is None:  # Delete the *entire* list
+            if current_value_dict is None:
+                embed = generate_simple_embed(f"There is no white/blacklist present here!",
+                                              "Therefore, you can't remove it :(")
+                await ctx.response.send_message(embed=embed)
+                return
+            else:
+                db_client['configuration'][str(ctx.guild.id)].delete_one({"type": configuration_option.value})
+                embed = generate_simple_embed(f"Successfully deleted {current_value_dict['mode']}"
+                                              f" \"{configuration_option.name}!\"",
+                                              "Thanks for the storage space! :D")
+                await ctx.response.send_message(embed=embed)
+                return
+        else:
+            # Remove a single value from a white/blacklist
+            if current_value_dict is None:  # If setting isn't set, you can't use it anyway
+                embed = generate_simple_embed(f"This setting is already not set!",
+                                              "Therefore, you can't remove it :(")
+                await ctx.response.send_message(embed=embed)
+                return
+            else:
+                current_value_dict = dict(current_value_dict)
+                encoded_object = await DiscordPickler.encode_object(active_variable)
+                if encoded_object in current_value_dict["value"]:  # If the item is in the white/blacklist
+                    new_value = current_value_dict["value"]  # Obtain the existing list
+                    new_value.remove(encoded_object)  # Remove current value
+                    # Replace value vvv
+                    (db_client['configuration'][str(ctx.guild.id)]
+                     .replace_one({"type": configuration_option.value},
+                                  {"type": configuration_option.value,
+                                   "mode": current_value_dict["mode"],
+                                   "value": new_value}))
+                    embed = generate_simple_embed(f"Successfully deleted item"
+                                                  f" {active_variable.mention}"
+                                                  f" from {current_value_dict['mode']}!",
+                                                  "Thanks for the storage space! :D")
+                    await ctx.response.send_message(embed=embed)
+                    return
+                else:  # We don't have that in the white/blacklist, so we don't need to do
+                    embed = generate_simple_embed(f"That {human_readable_value}"
+                                                  f" wasn't in the {current_value_dict['mode']} anyway!",
+                                                  "Therefore, it wasn't deleted.")
+                    await ctx.response.send_message(embed=embed)
+                    return
+
+    # If we are here, we can say "Updated permissions"
+    await ctx.response.send_message(embed=generate_simple_embed("Successfully updated permissions!",
+                                                                "Make sure to double-check that the new"
+                                                                " configuration is what you want it to be by "
+                                                                "using */triggered configure Get*."),
+                                    ephemeral=True)
 
 
 async def handle(id_type: str, creator: discord.Member = None, guild: discord.Guild = None, other=None):
     """
-    Handle a generic trigger firing
+    Handle a generic trigger firing.
     :param id_type: The type of the trigger
     :param creator: The discord.Member responsible for the action
     :param guild: The guild the command is in
@@ -1058,3 +1094,5 @@ if __name__ == "__main__":
         log.critical(f"Critical error: {str(e)}")
         log.critical("This is likely due to:\n1. Internet issues\n2. Incorrect discord token\n3. Incorrectly set up "
                      "discord bot")
+else:
+    log.critical("This file is NOT designed to be imported. Please run bot.py directly!")
