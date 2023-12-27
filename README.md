@@ -87,7 +87,7 @@ Now that you've made your shiny new Trigger, you have to add it to `configuratio
 Here's example formatting:
 
 
-![img.png](assets/img.png)
+![img.png](assets/example_requirements_json_trigger.png)
 
 
 
@@ -102,7 +102,7 @@ Here's example formatting:
 Here's an example Do:
 
 
-![img_3.png](assets/img_3.png)
+![img_3.png](assets/example_do.png)
 
 As you can see, you have to
 
@@ -140,7 +140,7 @@ Now that you've made your Do, you have to add it to `configuration/requirements.
 Here's example formatting:
 
 
-![img_1.png](assets/img_1.png)
+![img_1.png](assets/example_requirements_json_do.png)
 
 
 
