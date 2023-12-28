@@ -1,6 +1,7 @@
 # Triggered by @quantumbagel.
 import json
 import logging
+import subprocess
 import sys
 import time
 
@@ -12,7 +13,7 @@ from pymongo import MongoClient
 from backend import (GetTriggerDo, DiscordPickler, ValidateArguments, ValidateConfiguration, PaginationView,
                      TriggeredFormatter)
 
-logging.getLogger("discord").setLevel(logging.INFO)  # Discord.py logging level - INFO
+logging.getLogger("discord").setLevel(logging.INFO)  # Discord.py logging level - INFO (don't want DEBUG)
 logging.basicConfig(level=logging.DEBUG)
 EMBED_COLOR = discord.Color.from_rgb(255, 87, 51)
 
@@ -98,6 +99,17 @@ triggered = app_commands.Group(name="triggered", description="The heart and soul
 log.info("Welcome to Triggered by @quantumbagel!")
 
 
+def get_git_revision_short_hash() -> str:
+    """
+    Get the local git repository's commit version, or an empty string if it doesn't exist
+    :return:
+    """
+    try:
+        return subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).decode('ascii').strip()
+    except subprocess.CalledProcessError:  # The error thrown when outside a git repo
+        return "not running in git"
+
+
 def generate_simple_embed(title: str, description: str) -> discord.Embed:
     """
     Generate a simple embed
@@ -106,30 +118,11 @@ def generate_simple_embed(title: str, description: str) -> discord.Embed:
     :return: the embed
     """
     embed = discord.Embed(title=title, description=description, color=EMBED_COLOR)
-    embed.set_footer(text="Made with ❤ by @quantumbagel", icon_url="https://avatars.githubusercontent.com/u/58365715")
+    embed.set_footer(text=f"Made with ❤ by @quantumbagel ({get_git_revision_short_hash()})",
+                     icon_url="https://avatars.githubusercontent.com/u/58365715")
+
     return embed
 
-
-def obtain_configuration(id: int, is_user=False):
-    """
-    Get the config for a guild (server)
-    :param id: the ID of the user/guild
-    :param is_user: obtain user or guild
-    :return:
-    """
-    if not is_user:
-        configuration_db = db_client["server-configuration"][str(id)]
-        default_values = {"ch_blacklist": {"mode": "blacklist", "value": []},
-                          "role_blacklist": {"mode": "blacklist", "value": []},
-                          "role": {"value": None}}
-    else:
-        configuration_db = db_client["user-configuration"][str(id)]
-        default_values = {"user_blacklist": {"mode": "whitelist", "value": []}}
-    for value in configuration_db.find():
-        edit = default_values[dict(value)["type"]]
-        for k in edit:
-            edit[k] = dict(value)[k]
-    return default_values
 
 
 async def is_allowed(ctx: discord.Interaction, f_log: logging.Logger) -> bool:
@@ -160,7 +153,7 @@ async def is_allowed(ctx: discord.Interaction, f_log: logging.Logger) -> bool:
         await ctx.response.send_message(embed=embed, ephemeral=True)
         return False
     permissions = list(db_client["server-configuration"][str(ctx.guild.id)].find())
-    role_list = next((item for item in permissions if item['type'] == "role"), None)["value"]
+    role_list = next((item for item in permissions if item['type'] == "role"), {"value": None})["value"]
     decoded_role = await DiscordPickler.decode_object(role_list, ctx.guild)
     if decoded_role is None:
         if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
@@ -181,14 +174,121 @@ async def is_allowed(ctx: discord.Interaction, f_log: logging.Logger) -> bool:
     return True
 
 
+async def check_permissions(role: discord.Role, channel: discord.TextChannel | discord.VoiceChannel,
+                            member_used: discord.Member, calling_member: discord.Member, guild: discord.Guild,
+                            mode: str) -> (bool, str, str):
+    """
+    Check the permissions for the trigger
+    :param role:
+    :param channel:
+    :param member_used:
+    :param calling_member:
+    :return:
+    """
+    srv_config = db_client["server-configuration"]
+    usr_config = db_client["user-configuration"]
+
+    r_blacklist_trigger = (srv_config[str(guild.id)]
+                           .find_one({"type": "role_blacklist_trigger"}, {"type": False, "_id": False}))
+    if r_blacklist_trigger is not None:
+        r_blacklist_trigger = dict(r_blacklist_trigger)
+    r_blacklist_do = (srv_config[str(guild.id)]
+                      .find_one({"type": "role_blacklist_do"}, {"type": False, "_id": False}))
+    if r_blacklist_do is not None:
+        r_blacklist_do = dict(r_blacklist_do)
+    role_blacklist = {"trigger": r_blacklist_trigger, "do": r_blacklist_do}
+
+    ch_blacklist_trigger = (srv_config[str(guild.id)]
+                            .find_one({"type": "channel_blacklist_trigger"}, {"type": False, "_id": False}))
+    if ch_blacklist_trigger is not None:
+        ch_blacklist_trigger = dict(ch_blacklist_trigger)
+    ch_blacklist_do = (srv_config[str(guild.id)]
+                       .find_one({"type": "channel_blacklist_do"}, {"type": False, "_id": False}))
+    if ch_blacklist_do is not None:
+        ch_blacklist_do = dict(ch_blacklist_do)
+
+    channel_blacklist = {"trigger": ch_blacklist_trigger, "do": ch_blacklist_do}
+    if member_used is not None:
+        user_blacklist_trigger_from_used_perspective = (usr_config[str(member_used.id)]
+                                                        .find_one({"type": "user_blacklist_trigger"},
+                                                                  {"type": False, "_id": False}))
+
+        if user_blacklist_trigger_from_used_perspective is not None:
+            user_blacklist_trigger_from_used_perspective = dict(user_blacklist_trigger_from_used_perspective)
+        user_blacklist_do_from_used_perspective = (usr_config[str(member_used.id)]
+                                                   .find_one({"type": "user_blacklist_do"},
+                                                             {"type": False, "_id": False}))
+        if user_blacklist_do_from_used_perspective is not None:
+            user_blacklist_do_from_used_perspective = dict(user_blacklist_do_from_used_perspective)
+
+        user_blacklist = {"trigger": user_blacklist_trigger_from_used_perspective,
+                          "do": user_blacklist_do_from_used_perspective}
+
+        user_blacklist = user_blacklist[mode]
+
+    # VALIDATE USER
+    if member_used != calling_member and member_used is not None:  # If the member calling is using themselves, it's automatically valid
+        if user_blacklist is None:
+            return (False, f"You are not whitelisted by that user!",
+                    f"Ask the user {member_used.mention} to whitelist you!")
+            # If there is no user blacklist, assume NO PERMISSIONS
+        else:
+            encoded_used = await DiscordPickler.encode_object(calling_member)  # Get the person calling
+            if (user_blacklist["mode"] == "whitelist"
+                    and encoded_used not in user_blacklist["value"]):
+                return (False, f"You are not whitelisted by that user!",
+                        f"Ask the user {member_used.mention} to whitelist you!")
+                # If it's a whitelist and the user is *not* there, then False
+            elif (user_blacklist["mode"] == "blacklist"
+                  and encoded_used in user_blacklist["value"]):
+                return (False, f"You are blacklisted by that user!",
+                        f"If you think that this is a mistake, ask {member_used.mention}"
+                        f" to remove you from their blacklist.")
+                # If it's a blacklist and the user is there, then False
+
+    # VALIDATE CHANNEL
+    if channel_blacklist[mode] is not None:
+        encoded_channel = await DiscordPickler.encode_object(channel)
+        if (channel_blacklist[mode]["mode"] == "whitelist"
+                and encoded_channel not in channel_blacklist[mode]["value"]):
+            return (False, f"Channel not whitelisted!",
+                    f"If you think this is in error, ask a server admin to add {channel.mention}"
+                    f" to the Triggered whitelist.")
+            # If it's a whitelist and the channel is *not* there, then False
+        elif (channel_blacklist[mode]["mode"] == "blacklist"
+              and encoded_channel in channel_blacklist[mode]["value"]):
+            return (False, f"Channel blacklisted!",
+                    "If you think this is in error, ask a server admin"
+                    f" to remove {channel.mention} from the Triggered whitelist.")
+            # If it's a blacklist and the channel is there, then False
+
+    # VALIDATE ROLE
+    if role_blacklist[mode] is not None:
+        encoded_role = await DiscordPickler.encode_object(role)
+        if (role_blacklist[mode]["mode"] == "whitelist"
+                and encoded_role not in role_blacklist[mode]["value"]):
+            return (False, f"Role not whitelisted!",
+                    f"If you think this is in error, ask a server admin to add {role.mention}"
+                    f" to the Triggered whitelist.")
+            # If it's a whitelist and the channel is *not* there, then False
+        elif (role_blacklist[mode]["mode"] == "blacklist"
+              and encoded_role in role_blacklist[mode]["value"]):
+            return (False, f"Role blacklisted!",
+                    f"If you think this is in error, ask a server admin"
+                    f" to remove {role.mention} from the Triggered whitelist.")
+            # If it's a blacklist and the channel is there, then False
+
+    return True, "", ""
+
+
 @triggered.command(name="new", description="Create a trigger."
                                            " All optional arguments are dependent"
                                            " on the type of trigger that you choose.")
 @app_commands.choices(trigger=TRIGGER_OPTIONS)
 async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[str], description: str = None,
-              trigger_role: discord.Role = None,
-              trigger_member: discord.Member = None, trigger_text: str = None, trigger_emoji: str = None,
-              trigger_vc: discord.VoiceChannel = None, trigger_channel: discord.TextChannel = None):
+              trigger_role: discord.Role = None, trigger_member: discord.Member = None, trigger_text: str = None,
+              trigger_emoji: str = None, trigger_vc: discord.VoiceChannel = None,
+              trigger_channel: discord.TextChannel = None) -> None:
     """
     Create a new trigger. This registers the command in MongoDB
     :param ctx: The discord context
@@ -208,6 +308,15 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
     # Validate
     if not await is_allowed(ctx, f_log):
         return
+
+    permissions_valid, title, subheading = await check_permissions(trigger_role, trigger_channel, trigger_member,
+                                                             ctx.user, ctx.guild, "trigger")
+
+    if not permissions_valid:  # If permissions aren't valid, we can just send the prepared error message along.
+        embed = generate_simple_embed(title, subheading)
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return
+
     max_length = configuration['argument_length_limit']
     if len(name) > max_length:
         f_log.error("Trigger length too long!")
@@ -274,7 +383,7 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
 async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choice[str], do_name: str,
               description: str = None, do_member: discord.Member = None,
               do_channel: discord.TextChannel = None, do_vc: discord.VoiceChannel = None, do_text: str = None,
-              do_role: discord.Role = None, do_emoji: str = None):
+              do_role: discord.Role = None, do_emoji: str = None) -> None:
     """
     The "add" command. This command adds a do to a selected trigger
     :param do_name: The ID of the do. (required)
@@ -291,11 +400,18 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
     :return: None
     """
     f_log = log.getChild("add")
-    # Bot check
 
     # Validate
 
     if not await is_allowed(ctx, f_log):
+        return
+
+    permissions_valid, title, subheading = await check_permissions(do_role, do_channel, do_member,
+                                                             ctx.user, ctx.guild, "trigger")
+
+    if not permissions_valid:  # If permissions aren't valid, we can just send the prepared error message along.
+        embed = generate_simple_embed(title, subheading)
+        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
 
     # Length verification
@@ -385,7 +501,8 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
 @triggered.command(description="Delete a selected do or trigger. Some arguments are dependent on others.")
 @app_commands.choices(to_delete=[app_commands.Choice(name="Trigger", value="trigger"),
                                  app_commands.Choice(name="Do", value="do")])
-async def delete(ctx: discord.Interaction, to_delete: app_commands.Choice[str], trigger_name: str, do_name: str = None):
+async def delete(ctx: discord.Interaction, to_delete: app_commands.Choice[str],
+                 trigger_name: str, do_name: str = None) -> None:
     """
     Delete a do or trigger
     :param ctx:
@@ -459,7 +576,7 @@ async def delete(ctx: discord.Interaction, to_delete: app_commands.Choice[str], 
 @app_commands.choices(mode=[app_commands.Choice(name="Search", value="search"),
                             app_commands.Choice(name="View", value="view"),
                             app_commands.Choice(name="List all", value="view-all")])
-async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: str = None):
+async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: str = None) -> None:
     """
     View or search for the server's commands, and use PaginationView to send them.
     :param ctx: The Interaction object
@@ -622,7 +739,7 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
 async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
                        variables: dict, human_readable: dict, db_access_loc: str,
                        command_mode: str, conf_option_value: str, conf_option_name: str,
-                       default_blacklist_mode="blacklist"):
+                       default_blacklist_mode="blacklist") -> None:
     if not IS_ACTIVE:  # If the bot isn't online, just quit
         embed = generate_simple_embed("Bot has been disabled!",
                                       "Triggered has been temporarily disabled by @quantumbagel."
@@ -641,7 +758,7 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
         await ctx.response.send_message(embed=generate_simple_embed("Insufficient permissions!",
                                                                     "You must have the permission"
                                                                     " \"Administrator\" in this server"
-                                                                    "to use this command."),
+                                                                    " to use this command."),
                                         ephemeral=True)
         return
 
@@ -653,6 +770,12 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
     is_blacklist = configuration_dictionary[conf_option_value]  # Is the selected item a blacklist?
     human_readable_value = human_readable[conf_option_value]  # What's the human_readable name?
     active_variable = variables[conf_option_value]  # What is the value of the *relevant* variable?
+    if active_variable is None and command_mode not in ["switch", "get"]:
+        await ctx.response.send_message(embed=generate_simple_embed("Required variable not provided!",
+                                                                    f"You have to provide a variable to use"
+                                                                    f" the mode \"{command_mode}!\""),
+                                        ephemeral=True)
+        return
 
     if command_mode == "update" and is_blacklist:  # Case with update, and blacklist mode
         if current_value_dict is not None:  # The value already exists in the DB
@@ -663,7 +786,7 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
         else:
             # Default value of blacklist parameter
             current_value = []
-            mode = default_blacklist_mode
+            mode = default_blacklist_mode.capitalize()
             exists = False  # mark nonexistence
         new_addition = await DiscordPickler.encode_object(active_variable)  # Encode the active variable
         if new_addition in current_value:  # If it's already in the DB, throw an error at the user.
@@ -723,12 +846,13 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
             for item in current_value_dict["value"]:
                 try:
                     decoded = await DiscordPickler.decode_object(item, ctx.guild)
-                    v_permissions.append(item)
-                    all_permissions += ":arrow_right:   " + decoded.mention + "\n"
+                    if decoded is not None:  # check dead channels
+                        v_permissions.append(item)
+                        all_permissions += ":arrow_right:   " + decoded.mention + "\n"
                 except discord.NotFound:
                     continue
         else:
-            mode = "Blacklist"  # Server default is blacklist
+            mode = default_blacklist_mode.capitalize()  # Server default is blacklist
         if all_permissions:
             all_permissions = all_permissions[:-1]
         else:
@@ -829,7 +953,7 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
                       configuration_option=SERVER_CONFIGURATION_OPTIONS)
 async def server_configure(ctx: discord.Interaction, command_mode: app_commands.Choice[str],
                            configuration_option: app_commands.Choice[str], role_obj: discord.Role = None,
-                           channel: discord.VoiceChannel | discord.TextChannel = None):
+                           channel: discord.VoiceChannel | discord.TextChannel = None) -> None:
     """
     Set the server permissions - permission "administrator" is required for the user.
     :param command_mode: The mode for the command to function in
@@ -841,12 +965,16 @@ async def server_configure(ctx: discord.Interaction, command_mode: app_commands.
     """
 
     configuration_dictionary = {"role": False,
-                                "ch_blacklist": True,
-                                "role_blacklist": True}  # Whether each category is a list (True) or not (False)
+                                "ch_blacklist_trigger": True,
+                                "ch_blacklist_do": True,
+                                "role_blacklist_trigger": True,
+                                "role_blacklist_do": True}  # Whether each category is a list (True) or not (False)
     # Index each parameter for dynamic access
-    variables = {"role": role_obj, "ch_blacklist": channel, "role_blacklist": role_obj}
+    variables = {"role": role_obj, "ch_blacklist_trigger": channel, "ch_blacklist_do": channel,
+                 "role_blacklist_trigger": role_obj, "role_blacklist_do": role_obj}
     # Get the type each parameter is using
-    human_readable = {"role": "role", "ch_blacklist": "channel", "role_blacklist": "role"}
+    human_readable = {"role": "role", "ch_blacklist_trigger": "channel", "role_blacklist_trigger": "role",
+                      "ch_blacklist_do": "channel", "role_blacklist_do": "role"}
 
     await configurator(ctx, configuration_dictionary, variables, human_readable, "server-configuration",
                        command_mode.value, configuration_option.value, configuration_option.name)
@@ -857,7 +985,7 @@ async def server_configure(ctx: discord.Interaction, command_mode: app_commands.
 @app_commands.choices(command_mode=CONFIGURATION_MODES,
                       configuration_option=USER_CONFIGURATION_OPTIONS)
 async def user_configure(ctx: discord.Interaction, command_mode: app_commands.Choice[str],
-                         configuration_option: app_commands.Choice[str], user: discord.Member = None):
+                         configuration_option: app_commands.Choice[str], user: discord.Member = None) -> None:
     """
     Configures user settings.
     :param ctx: The discord.Interaction
@@ -876,10 +1004,11 @@ async def user_configure(ctx: discord.Interaction, command_mode: app_commands.Ch
     human_readable = {"user_blacklist_trigger": "member", "user_blacklist_do": "member"}
 
     await configurator(ctx, configuration_dictionary, variables, human_readable, "user-configuration",
-                       command_mode.value, configuration_option.value, configuration_option.name)
+                       command_mode.value, configuration_option.value, configuration_option.name,
+                       default_blacklist_mode="whitelist")
 
 
-async def handle(id_type: str, creator: discord.Member = None, guild: discord.Guild = None, other=None):
+async def handle(id_type: str, creator: discord.Member = None, guild: discord.Guild = None, other=None) -> None:
     """
     Handle a generic trigger firing.
     :param id_type: The type of the trigger
@@ -986,7 +1115,7 @@ async def handle(id_type: str, creator: discord.Member = None, guild: discord.Gu
 
 
 @client.event
-async def on_message(msg: discord.Message):
+async def on_message(msg: discord.Message) -> None:
     """
     Handle the on_message trigger and redirect to handle()
     :param msg: The message
@@ -1015,7 +1144,7 @@ async def on_message(msg: discord.Message):
             return
         IS_ACTIVE = False
         f_log.critical("BOT HAS BEEN DISABLED!")
-        await msg.add_reaction("✅")  # leave confirmation
+        await msg.add_reaction("⛔")  # leave confirmation
         return
     elif msg.content == "triggered/enable" and msg.author.id == configuration["owner_id"]:  # Enable bot
         if IS_ACTIVE:
@@ -1042,7 +1171,7 @@ async def on_message(msg: discord.Message):
 
 
 @client.event
-async def on_raw_reaction_add(ctx: discord.RawReactionActionEvent):
+async def on_raw_reaction_add(ctx: discord.RawReactionActionEvent) -> None:
     """
     Handle the reaction_add trigger and redirect to handle()
     :param ctx: The data from discord
@@ -1056,7 +1185,7 @@ async def on_raw_reaction_add(ctx: discord.RawReactionActionEvent):
 
 
 @client.event
-async def on_raw_reaction_remove(ctx: discord.RawReactionActionEvent):
+async def on_raw_reaction_remove(ctx: discord.RawReactionActionEvent) -> None:
     """
     Handle the reaction_remove trigger and redirect to handle()
     :param ctx: The data from discord
@@ -1074,7 +1203,9 @@ async def on_raw_reaction_remove(ctx: discord.RawReactionActionEvent):
 
 
 @client.event
-async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+async def on_voice_state_update(member: discord.Member,
+                                before: discord.VoiceState,
+                                after: discord.VoiceState) -> None:
     """
     Handle the vc_join and vc_leave trigger and redirect to handle()
     :param after: the VoiceState after
@@ -1094,7 +1225,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
 
 @client.event
-async def on_member_join(member: discord.Member):
+async def on_member_join(member: discord.Member) -> None:
     """
     Call handle with the "member_join" event
     :param member: The member who joined
@@ -1107,7 +1238,7 @@ async def on_member_join(member: discord.Member):
 
 
 @client.event
-async def on_member_remove(member: discord.Member):
+async def on_member_remove(member: discord.Member) -> None:
     """
     Call handle with the "member_leave" event
     :param member: The member who left :(
@@ -1121,8 +1252,8 @@ async def on_member_remove(member: discord.Member):
     dropped = 0
     for command_to_remove in valid:
         if dict(watching_commands_access[command_to_remove]
-                        .find_one({"type": "meta"},
-                                  {"type": False, "_id": False}))["author"][1] == member.guild.id:
+                .find_one({"type": "meta"},
+                          {"type": False, "_id": False}))["author"][1] == member.guild.id:
             watching_commands_access.drop_collection(command_to_remove)
             dropped += 1
     f_log.info(f"Dropped {dropped} commands.")
@@ -1132,7 +1263,7 @@ async def on_member_remove(member: discord.Member):
 
 
 @client.event
-async def on_guild_join(guild: discord.Guild):
+async def on_guild_join(guild: discord.Guild) -> None:
     """
     Send a message to guilds when the bot is added.
     :param guild: the guild the bot was added to
@@ -1141,7 +1272,9 @@ async def on_guild_join(guild: discord.Guild):
     f_log = log.getChild("event.guild_join")
     f_log.info("Added to guild \"" + guild.name + f"\"! (id={guild.id})")
     embed = discord.Embed(title="Hi! I'm Triggered!",
-                          description="Thanks for adding me to your server :D\nHere's some tips on how to get started.",
+                          description="Thanks for adding me to your server :D\nHere's some tips on how to get started.\n"
+                                      "Please note that this introduction (or the bot) don't contain details on how to"
+                                      " use the bot. For that, please check the README (linked below).",
                           color=EMBED_COLOR)
     embed.add_field(name="What is this bot?",
                     value="Triggered is a IFTTT bot (if-this-then-that) bot designed for programmable triggers"
@@ -1155,14 +1288,14 @@ async def on_guild_join(guild: discord.Guild):
                     value="Please read the [README](https://github.com/quantumbagel/Triggered/blob/master/README.md)"
                           " for command usage :D")
     embed.add_field(name="I can't use /triggered!",
-                    value='You have to have a higher role than the bot to use its commands - this is to prevent access'
-                          ' to triggers being created by non-trusted server members.'
-                          ' Please ask your aprivatein to get access to Triggered.')
+                    value='Triggered has a settable permission role. If this role is set,'
+                          ' Triggered will only let you use its commands if you have that role. Otherwise,'
+                          ' you must be ranked higher in the role hierarchy than Triggered.')
     embed.add_field(name="Who made you?",
                     value="[@quantumbagel on Github](https://github.com/quantumbagel)")
 
-    embed.set_footer(text="Made with ❤ by @quantumbagel", icon_url="https://avatars.githubusercontent.com/u/58365715")
-
+    embed.set_footer(text=f"Made with ❤ by @quantumbagel ({get_git_revision_short_hash()})",
+                     icon_url="https://avatars.githubusercontent.com/u/58365715")
     # Make sure to send in the system channel - if there is none, nothing *should* be sent
     try:
         await guild.system_channel.send(embed=embed)
@@ -1171,7 +1304,7 @@ async def on_guild_join(guild: discord.Guild):
 
 
 @client.event
-async def on_guild_remove(guild: discord.Guild):
+async def on_guild_remove(guild: discord.Guild) -> None:
     """
     Purge data from guilds we were kicked from.
     :param guild: The guild we were removed from
