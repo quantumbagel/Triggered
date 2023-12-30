@@ -1,6 +1,9 @@
-{"bot_secret": "<insert secret here>",
+{"bot_secret": "",
   "max_dos_per_trigger": 3,
   "argument_length_limit":  128,
   "allowed_execution": 3,
   "owner_id": 897146430664355850,
-  "mongodb_uri": "mongodb://localhost:27017"}
+  "mongodb_uri": "mongodb://localhost:27017",
+  "auto_update": true,
+  "update_to": "stable",
+  "check_for_updates": true}
