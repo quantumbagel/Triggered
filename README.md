@@ -8,6 +8,8 @@ This README will attempt to do the following:
 * How to use the bot itself
 * TODOS (things I want to add to the bot that aren't currently present)
 
+**Please note this README is out of date**
+
 Alright, let's get started!
 
 ## What is Triggered?
