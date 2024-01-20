@@ -1,4 +1,4 @@
-{"bot_secret": "MTE4MTMzODEzMzIwNDMwNzk2OA.GJC7qc.NWVtKdT9ZYFbEWsUdXdYkTjEzBY1m3HhPCMz7Y",
+{"bot_secret": "",
   "max_dos_per_trigger": 3,
   "argument_length_limit":  128,
   "allowed_execution": 3,
