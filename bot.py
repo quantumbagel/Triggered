@@ -109,7 +109,7 @@ if configuration['check_for_updates']:
                     f" (stream={configuration['update_to']}, out_of_date_by={out_of_date_by}s)."
                     f" The program will then close. If you want Triggered to automatically restart"
                     f", please use systemd or Docker (recommended)")
-        success, exception = GitTools.update_to(commit_hash)
+        success, exception = GitTools.update_to(configuration["update_to"])
         if success:
             log.warning("Successfully updated Triggered! Stopping.")
             sys.exit(0)
