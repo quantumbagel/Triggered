@@ -1,5 +1,10 @@
 # Triggered
 
-This is the *development* branch. Please go to the [*stable* branch](https://github.com/quantumbagel/Triggered/tree/stable) for documentation. 
 
-Thanks :D
+Triggered is a beautiful Discord bot.
+
+
+I need to add a README with actual substance here.
+
+If you are genuinely interested in this bot, please contact me on my [website](https://quantumbagel.github.io)
+
