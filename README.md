@@ -2,8 +2,6 @@
 
 Triggered is a self-hostable Discord **if-this-then-that** bot. You create a **trigger** (something that happens in a server) and attach one or more **dos** (actions the bot should take). Example: if a message contains `hello`, send a notification embed to `#alerts`.
 
-This repository is at **v1.0 RC1**. The public branch is [`main`](https://github.com/quantumbagel/Triggered/tree/main). Development happens on [`dev`](https://github.com/quantumbagel/Triggered/tree/dev).
-
 [Invite the hosted bot](https://discord.com/api/oauth2/authorize?client_id=1181338133204307968&permissions=268454912&response_type=code&redirect_uri=https%3A%2F%2Fgithub.com%2Fquantumbagel&scope=bot+applications.commands.permissions.update+applications.commands) · [Author](https://github.com/quantumbagel)
 
 ---
@@ -35,14 +33,14 @@ cd Triggered
 git checkout main
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
 1. Create a Discord application at [https://discord.com/developers/applications](https://discord.com/developers/applications).
 2. Create a bot user, copy the token, and enable the privileged intents listed above.
 3. Invite the bot with `applications.commands` and permission to view channels, send messages, and embed links.
 4. Start MongoDB. The default URI is `mongodb://localhost:27017`.
-5. Edit `configuration/config.json` (see below).
+5. Copy `configuration/config.example.json` to `configuration/config.json` and fill in your bot token, owner ID, and MongoDB URI.
 6. Run the bot:
 
 ```bash
@@ -55,7 +53,7 @@ python bot.py
 
 ## Configuration
 
-All runtime settings live in `configuration/config.json`.
+All runtime settings live in `configuration/config.json`. Any of them can be overridden with a matching `TRIGGERED_*` environment variable (useful for Docker).
 
 | Key                     | Type   | Meaning                                                                                                          |
 |-------------------------|--------|------------------------------------------------------------------------------------------------------------------|
@@ -69,7 +67,9 @@ All runtime settings live in `configuration/config.json`.
 | `auto_update`           | bool   | If an update is available, check out the configured stream, pull, and exit so a process manager can restart you. |
 | `update_to`             | string | Git branch to follow: `main`, `stable`, or `dev`.                                                                |
 
-`configuration/requirements.json` is **not** server config. It maps trigger/do IDs to Python classes so the bot can load them dynamically.
+Environment overrides use the same names in uppercase with a `TRIGGERED_` prefix, for example `TRIGGERED_BOT_SECRET`, `TRIGGERED_MONGODB_URI`, `TRIGGERED_OWNER_ID`. Booleans accept `true`/`false` (or `1`/`0`).
+
+`configuration/requirements.json` is **not** server config. It maps trigger/do IDs to Python classes so the bot can load them dynamically. The module file is inferred from the ID (`contains-text` → `actions/triggers/contains_text.py`) unless you set `"module"` on the entry.
 
 ---
 
@@ -168,9 +168,9 @@ Each list starts as a blacklist (everything allowed except listed items). Use `S
 
 The bot loads everything listed in `configuration/requirements.json`.
 
-1. Subclass `actions.triggers.Trigger.Trigger` or `actions.dos.Do.Do`.
+1. Subclass `actions.triggers.trigger.Trigger` or `actions.dos.do.Do`.
 2. Implement `dropdown_name()`, `human()`, and `is_valid()` (triggers) or `execute()` (dos).
-3. Put the file in `actions/triggers/` or `actions/dos/`.
+3. Put the file in `actions/triggers/` or `actions/dos/`, named after the ID (`contains-text` → `contains_text.py`).
 4. Register it in `configuration/requirements.json` with an ID, `class` name, `type` (triggers only), and `params`.
 
 Trigger `type` must be one of: `send_msg`, `vc_join`, `vc_leave`, `reaction_add`, `reaction_remove`, `member_join`, `member_leave`.
@@ -182,27 +182,48 @@ Open a pull request against `dev` if you want it in the public bot.
 ## Project layout
 
 ```
-bot.py                      # Discord client, slash commands, event routing
-actions/triggers/           # Trigger implementations
-actions/dos/                # Do implementations
-backend/                   # Mongo encoding, validation, pagination, git updates
-configuration/config.json   # Runtime settings (token, MongoDB, owner)
-configuration/requirements.json  # Trigger/do registry
+bot.py                         # Discord client, slash commands, event routing
+actions/triggers/              # Trigger implementations (snake_case modules)
+actions/dos/                   # Do implementations
+backend/                      # Encoding, validation, pagination, git updates
+configuration/config.json      # Runtime settings (token, MongoDB, owner)
+configuration/requirements.json
+pyproject.toml                 # Package metadata and dependencies
+Dockerfile / docker-compose.yml
 ```
 
 ## Branches
 
 | Branch | Role |
 | --- | --- |
-| `main` | Public stable snapshot (v1.0 RC1 plus docs). Clone this. |
+| `main` | Public stable snapshot (v1.0). Clone this. |
 | `stable` | Auto-update stream. Kept in sync with `main` for existing configs that still set `update_to` to `"stable"`. |
 | `dev` | Active development. May be ahead of `main`. |
 
 If you enable `auto_update`, run the process under systemd, Docker, or another supervisor — the bot exits after a successful pull so it can be restarted on the new commit.
+
+## Tests
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
+## Docker
+
+Copy `.env.example` to `.env` and set your bot token and owner ID. Then:
+
+```bash
+docker compose up --build
+```
+
+Compose starts MongoDB and the bot. The bot reads `configuration/config.example.json` inside the image and applies `TRIGGERED_*` environment variables from Compose (Mongo URI, token, owner, and auto-update off).
+
+To use a local `configuration/config.json` instead, bind-mount it onto `/app/configuration/config.json`. Environment variables still win when set.
 
 ## Known limits
 
 - Slash commands do not work in DMs.
 - There is no periodic / scheduled trigger yet.
 - The hosted invite is a small personal bot, not a high-availability service. Self-host if you need it reliable.
-- `config.json` is required at `configuration/config.json`; there is no environment-variable override.
+- `config.json` is required at `configuration/config.json` (copy it from `configuration/config.example.json`). Keep that file private — it is gitignored. Docker can skip a local config file and use `TRIGGERED_*` environment variables instead.
