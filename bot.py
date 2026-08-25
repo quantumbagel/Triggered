@@ -1305,9 +1305,10 @@ async def on_member_remove(member: discord.Member) -> None:
 
     dropped = 0
     for command_to_remove in valid:
-        if dict(watching_commands_access[command_to_remove]
-                        .find_one({"type": "meta"},
-                                  {"type": False, "_id": False}))["author"][1] == member.guild.id:
+        author_id = dict(watching_commands_access[command_to_remove]
+                         .find_one({"type": "meta"},
+                                   {"type": False, "_id": False}))["author"][1]
+        if int(author_id) == member.id:
             watching_commands_access.drop_collection(command_to_remove)
             dropped += 1
     f_log.info(f"Dropped {dropped} commands.")
@@ -1339,7 +1340,7 @@ async def on_guild_join(guild: discord.Guild) -> None:
                           " and submit a pull request with your code."
                           " You might see your trigger/do in the main bot!")
     embed.add_field(name="Bro, I'm not a developer - I just want to use this bot!",
-                    value="Please read the [README](https://github.com/quantumbagel/Triggered/blob/master/README.md)"
+                    value="Please read the [README](https://github.com/quantumbagel/Triggered/blob/main/README.md)"
                           " for command usage :D")
     embed.add_field(name="I can't use /triggered!",
                     value='Triggered has a settable permission role. If this role is set,'
