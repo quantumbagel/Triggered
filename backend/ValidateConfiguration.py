@@ -21,8 +21,8 @@ def validate_config(config_dictionary: dict) -> (bool, str):
         if type(config_dictionary[key]) is not required_keys[key]:
             return False, (f"Configuration argument \"{key}\" is not correct type"
                            f" (got=\"{type(config_dictionary[key])}\", expected=\"{required_keys[key]}\")!")
-        if key == "update_to" and config_dictionary[key] not in ["stable", "dev"]:
-            return False, f"Configuration argument \"update_to\" must be either \"stable\" or \"dev.\""
+        if key == "update_to" and config_dictionary[key] not in ["stable", "dev", "main"]:
+            return False, f"Configuration argument \"update_to\" must be \"stable\", \"dev\", or \"main.\""
 
     return True, ""
 

@@ -15,7 +15,7 @@ def get_git_revision_short_hash() -> str:
 def check_for_updates(stream="stable") -> (bool, str, str, int, int):
     """
     Return a boolean describing if an update is available
-    :param stream: the stream to update on (stable, dev)
+    :param stream: the stream to update on (main, stable, or dev)
     :return:
     """
     try:
@@ -37,7 +37,7 @@ def check_for_updates(stream="stable") -> (bool, str, str, int, int):
         return False, "", "", 0, 0
 
 
-def update(stream: str) -> (bool, str):
+def update_to(stream: str) -> (bool, str):
     """
     Update to this stream from remote
     :param stream: the stream to update to
@@ -49,3 +49,7 @@ def update(stream: str) -> (bool, str):
         return True, ""
     except subprocess.CalledProcessError as e:
         return False, str(e)
+
+
+def update(stream: str) -> (bool, str):
+    return update_to(stream)
