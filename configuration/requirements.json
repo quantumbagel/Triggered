@@ -1,86 +1,95 @@
-{"triggers": {
-  "contains-text": {
-    "params": {
-      "text": {
-        "required": true
-      }
+{
+  "triggers": {
+    "contains-text": {
+      "params": {
+        "text": {
+          "required": true
+        }
+      },
+      "class": "ContainsTextTrigger",
+      "type": "send_msg"
     },
-    "class": "ContainsTextTrigger",
-    "type": "send_msg"
-  },
-  "contains-word": {
-    "params": {
-      "text": {
-        "required": true
-      }
+    "contains-word": {
+      "params": {
+        "text": {
+          "required": true
+        }
+      },
+      "class": "ContainsWordTrigger",
+      "type": "send_msg"
     },
-    "class": "ContainsWordTrigger",
-    "type": "send_msg"
-  },
-  "role-mentioned": {
-    "params": {
-      "role": {
-        "required": true
-      }
+    "role-mentioned": {
+      "params": {
+        "role": {
+          "required": true
+        }
+      },
+      "class": "RoleMentionedTrigger",
+      "type": "send_msg"
     },
-    "class": "RoleMentionedTrigger",
-    "type": "send_msg"
-  },
-  "reaction-added": {
-    "params": {
-      "emoji": {
-        "required": true
-      }
+    "reaction-added": {
+      "params": {
+        "emoji": {
+          "required": true
+        }
+      },
+      "class": "ReactionAddedTrigger",
+      "type": "reaction_add"
     },
-    "class": "ReactionAddedTrigger",
-    "type": "reaction_add"
-  },
-  "reaction-removed": {
-    "params": {
-      "emoji": {
-        "required": true
-      }
+    "reaction-removed": {
+      "params": {
+        "emoji": {
+          "required": true
+        }
+      },
+      "class": "ReactionRemovedTrigger",
+      "type": "reaction_remove"
     },
-    "class": "ReactionRemovedTrigger",
-    "type": "reaction_remove"
-  },
-  "join-vc": {
-    "params": {
-      "vc": {
-        "required": true
-      }
+    "join-vc": {
+      "params": {
+        "vc": {
+          "required": true
+        }
+      },
+      "class": "JoinedVCTrigger",
+      "type": "vc_join"
     },
-    "class": "JoinedVCTrigger",
-    "type": "vc_join"
-  },
-  "left-vc": {
-    "params": {
-      "vc": {
-        "required": true
-      }
+    "left-vc": {
+      "params": {
+        "vc": {
+          "required": true
+        }
+      },
+      "class": "LeftVCTrigger",
+      "type": "vc_leave"
     },
-    "class": "LeftVCTrigger",
-    "type": "vc_leave"
-  },
-  "member-joined": {
-    "params": {},
-    "class": "MemberJoinTrigger",
-    "type": "member_join"
-  },
-  "member-left": {
-    "params": {},
-    "class": "MemberLeaveTrigger",
-    "type": "member_leave"
+    "member-joined": {
+      "params": {},
+      "class": "MemberJoinTrigger",
+      "type": "member_join"
+    },
+    "member-left": {
+      "params": {},
+      "class": "MemberLeaveTrigger",
+      "type": "member_leave"
     }
-},
+  },
   "do": {
     "send-dm": {
-        "params":
-            {"member": {"required": true}},
-        "class": "SendDMDo"
-    }, "send-message": {
-      "params": {"channel": {"required":  true}
-      }, "class": "SendMessageDo"
+      "params": {
+        "member": {
+          "required": true
+        }
+      },
+      "class": "SendDMDo"
+    },
+    "send-message": {
+      "params": {
+        "channel": {
+          "required": true
+        }
+      },
+      "class": "SendMessageDo"
     }
   }
 }

@@ -5,3 +5,6 @@ __pycache__/
 venv/
 .env
 .DS_Store
+configuration/config.json
+*.egg-info/
+.pytest_cache/

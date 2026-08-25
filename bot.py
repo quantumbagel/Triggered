@@ -9,8 +9,9 @@ import pymongo.errors
 from discord import app_commands
 from pymongo import MongoClient
 
-from backend import (GetTriggerDo, DiscordPickler, ValidateArguments, ValidateConfiguration, PaginationView,
-                     TriggeredFormatter, GitTools)
+from backend import (discord_pickler, get_trigger_do, git_tools, pagination_view, triggered_formatter,
+                     validate_arguments, validate_configuration)
+from backend.permissions import item_is_denied, normalize_mode
 
 logging.getLogger("discord").setLevel(logging.INFO)  # Discord.py logging level - INFO (don't want DEBUG)
 logging.basicConfig(level=logging.DEBUG)
@@ -24,13 +25,14 @@ rlog.setLevel(logging.DEBUG)
 ch = logging.StreamHandler(stream=sys.stdout)
 ch.setLevel(logging.DEBUG)
 
-ch.setFormatter(TriggeredFormatter.TriggeredFormatter())  # custom formatter
+ch.setFormatter(triggered_formatter.TriggeredFormatter())  # custom formatter
 rlog.handlers = [ch]  # Make sure to not double print
 
 log = logging.getLogger("triggered")  # Base logger
 
 configuration = json.load(open('configuration/config.json'))
-valid_configuration, reason = ValidateConfiguration.validate_config(configuration)
+configuration = validate_configuration.apply_env_overrides(configuration)
+valid_configuration, reason = validate_configuration.validate_config(configuration)
 if not valid_configuration:
     log.critical(f"Configuration file (configuration/config.json) is not valid. (reason=\"{reason}\")")
     sys.exit(1)  # Can't run with invalid configuration file.
@@ -62,7 +64,7 @@ USER_CONFIGURATION_OPTIONS = [app_commands.Choice(name="User Whitelist/Blacklist
                                                   value='user_blacklist_trigger'),
                               app_commands.Choice(name="User Whitelist/Blacklist (Do)",
                                                   value='user_blacklist_do')]
-TRIGGER_REQUIREMENTS, DO_REQUIREMENTS = GetTriggerDo.get_trigger_do()
+TRIGGER_REQUIREMENTS, DO_REQUIREMENTS = get_trigger_do.get_trigger_do()
 
 if DO_REQUIREMENTS is None:  # Error has occurred, print and exit
     log.critical(f"Invalid data ({TRIGGER_REQUIREMENTS})")
@@ -96,20 +98,20 @@ log.debug("Successfully connected to MongoDB!")
 watching_commands_access = db_client['commands']
 triggered = app_commands.Group(name="triggered", description="The heart and soul of the game.")  # The /triggered group
 # I don't think that description is visible anywhere, but maybe it is lol.
-CURRENT_REV = GitTools.get_git_revision_short_hash()
+CURRENT_REV = git_tools.get_git_revision_short_hash()
 log.info(f"Welcome to Triggered by @quantumbagel! (git revision: {CURRENT_REV})")
 # Check for updates
 
 if configuration['check_for_updates']:
     should_update, commit_hash, current_long, our_time, new_time = (
-        GitTools.check_for_updates(configuration["update_to"]))
+        git_tools.check_for_updates(configuration["update_to"]))
     out_of_date_by = new_time - our_time
     if configuration['auto_update'] and should_update:
         log.warning(f"Triggered is updating from commit {current_long} to {commit_hash}"
                     f" (stream={configuration['update_to']}, out_of_date_by={out_of_date_by}s)."
                     f" The program will then close. If you want Triggered to automatically restart"
                     f", please use systemd or Docker (recommended)")
-        success, exception = GitTools.update_to(configuration["update_to"])
+        success, exception = git_tools.update_to(configuration["update_to"])
         if success:
             log.warning("Successfully updated Triggered! Stopping.")
             sys.exit(0)
@@ -140,7 +142,23 @@ def generate_simple_embed(title: str, description: str) -> discord.Embed:
     return embed
 
 
-async def is_allowed(ctx: discord.Interaction, f_log: logging.Logger) -> bool:
+def iter_guild_collections(guild_id) -> list[tuple[str, str]]:
+    """Return (collection_name, trigger_name) pairs for a guild."""
+    prefix = f"{guild_id}."
+    found = []
+    for col in watching_commands_access.list_collection_names():
+        if col.startswith(prefix):
+            found.append((col, col[len(prefix):]))
+    return found
+
+
+def load_access_list(collection, list_type: str) -> dict | None:
+    doc = collection.find_one({"type": list_type}, {"type": False, "_id": False})
+    return dict(doc) if doc is not None else None
+
+
+async def is_allowed(ctx: discord.Interaction, f_log: logging.Logger, *,
+                     require_permission_role: bool = True) -> bool:
     """
     Returns if an interaction should be allowed.
     This checks for:
@@ -167,9 +185,11 @@ async def is_allowed(ctx: discord.Interaction, f_log: logging.Logger) -> bool:
                                       " Support for some DM commands may come in the future.")
         await ctx.response.send_message(embed=embed, ephemeral=True)
         return False
+    if not require_permission_role:
+        return True
     permissions = list(db_client["server-configuration"][str(ctx.guild.id)].find())
     role_list = next((item for item in permissions if item['type'] == "role"), {"value": None})["value"]
-    decoded_role = await DiscordPickler.decode_object(role_list, ctx.guild)
+    decoded_role = await discord_pickler.decode_object(role_list, ctx.guild)
     if decoded_role is None:
         if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
             f_log.error("User attempted to access with insufficient permission (old method) >:(")
@@ -189,111 +209,66 @@ async def is_allowed(ctx: discord.Interaction, f_log: logging.Logger) -> bool:
     return True
 
 
-async def check_permissions(roles: list[discord.Role], channels: list[discord.TextChannel | discord.VoiceChannel],
+async def check_permissions(roles: list, channels: list,
                             member_used: discord.Member, calling_member: discord.Member, guild: discord.Guild,
-                            mode: str) \
-        -> (bool, str, str):
+                            mode: str, event_channel=None) -> tuple[bool, str, str]:
     """
-    Check the permissions for the trigger
+    Check the permissions for the trigger or do.
     :param guild: the Guild the command is being run in
     :param mode: the mode the command is (trigger/do)
-    :param roles: the Roles used
-    :param channels: the Channels used
-    :param member_used: the Member in the command
-    :param calling_member: the member calling the command
+    :param roles: the Roles used as arguments
+    :param channels: the Channels used as arguments
+    :param member_used: the Member targeted by the command
+    :param calling_member: the member calling the command / firing the event
+    :param event_channel: the channel the event happened in, if any
     :return: whether the permissions allow this to work
     """
-    srv_config = db_client["server-configuration"]
-    usr_config = db_client["user-configuration"]
-    r_blacklist_trigger = (srv_config[str(guild.id)]
-                           .find_one({"type": "role_blacklist_trigger"}, {"type": False, "_id": False}))
-    if r_blacklist_trigger is not None:
-        r_blacklist_trigger = dict(r_blacklist_trigger)
-    r_blacklist_do = (srv_config[str(guild.id)]
-                      .find_one({"type": "role_blacklist_do"}, {"type": False, "_id": False}))
-    if r_blacklist_do is not None:
-        r_blacklist_do = dict(r_blacklist_do)
-    role_blacklist = {"trigger": r_blacklist_trigger, "do": r_blacklist_do}
+    srv_config = db_client["server-configuration"][str(guild.id)]
+    role_list = load_access_list(srv_config, f"role_blacklist_{mode}")
+    channel_list = load_access_list(srv_config, f"ch_blacklist_{mode}")
 
-    ch_blacklist_trigger = (srv_config[str(guild.id)]
-                            .find_one({"type": "channel_blacklist_trigger"}, {"type": False, "_id": False}))
-    if ch_blacklist_trigger is not None:
-        ch_blacklist_trigger = dict(ch_blacklist_trigger)
-    ch_blacklist_do = (srv_config[str(guild.id)]
-                       .find_one({"type": "channel_blacklist_do"}, {"type": False, "_id": False}))
-    if ch_blacklist_do is not None:
-        ch_blacklist_do = dict(ch_blacklist_do)
-
-    channel_blacklist = {"trigger": ch_blacklist_trigger, "do": ch_blacklist_do}
-
-    if member_used != calling_member and member_used is not None:
-        user_blacklist_trigger_from_used_perspective = (usr_config[str(member_used.id)]
-                                                        .find_one({"type": "user_blacklist_trigger"},
-                                                                  {"type": False, "_id": False}))
-
-        if user_blacklist_trigger_from_used_perspective is not None:
-            user_blacklist_trigger_from_used_perspective = dict(user_blacklist_trigger_from_used_perspective)
-        user_blacklist_do_from_used_perspective = (usr_config[str(member_used.id)]
-                                                   .find_one({"type": "user_blacklist_do"},
-                                                             {"type": False, "_id": False}))
-        if user_blacklist_do_from_used_perspective is not None:
-            user_blacklist_do_from_used_perspective = dict(user_blacklist_do_from_used_perspective)
-
-        user_blacklist = {"trigger": user_blacklist_trigger_from_used_perspective,
-                          "do": user_blacklist_do_from_used_perspective}
-
-        user_blacklist = user_blacklist[mode]
-        # If the member calling is using themselves, it's automatically valid. Otherwise, run this code
-        if user_blacklist is None:
-            return (False, f"You are not whitelisted by that user!",
-                    f"Ask the user {member_used.mention} to whitelist you!")
-            # If there is no user blacklist, assume NO PERMISSIONS
-        else:
-            encoded_used = await DiscordPickler.encode_object(calling_member)  # Get the person calling
-            if (user_blacklist["mode"] == "whitelist"
-                    and encoded_used not in user_blacklist["value"]):
-                return (False, f"You are not whitelisted by that user!",
-                        f"Ask the user {member_used.mention} to whitelist you!")
-                # If it's a whitelist and the user is *not* there, then False
-            elif (user_blacklist["mode"] == "blacklist"
-                  and encoded_used in user_blacklist["value"]):
-                return (False, f"You are blacklisted by that user!",
+    if member_used is not None and member_used != calling_member:
+        user_list = load_access_list(db_client["user-configuration"][str(member_used.id)],
+                                     f"user_blacklist_{mode}")
+        encoded_used = await discord_pickler.encode_object(calling_member)
+        if item_is_denied(encoded_used, user_list, default_allow=False):
+            list_mode = normalize_mode(user_list.get("mode")) if user_list else "whitelist"
+            if list_mode == "blacklist":
+                return (False, "You are blacklisted by that user!",
                         f"If you think that this is a mistake, ask {member_used.mention}"
                         f" to remove you from their blacklist.")
-                # If it's a blacklist and the user is there, then False
+            return (False, "You are not whitelisted by that user!",
+                    f"Ask the user {member_used.mention} to whitelist you!")
 
-    # VALIDATE CHANNEL
-    if channel_blacklist[mode] is not None:
-        for channel in channels:
-            encoded_channel = await DiscordPickler.encode_object(channel)
-            if (channel_blacklist[mode]["mode"] == "whitelist"
-                    and encoded_channel not in channel_blacklist[mode]["value"]):
-                return (False, f"Channel not whitelisted!",
-                        f"If you think this is in error, ask a server admin to add {channel.mention}"
+    for channel in list(channels) + [event_channel]:
+        if channel is None:
+            continue
+        encoded_channel = await discord_pickler.encode_object(channel)
+        if item_is_denied(encoded_channel, channel_list, default_allow=True):
+            list_mode = normalize_mode(channel_list.get("mode")) if channel_list else None
+            mention = getattr(channel, "mention", str(channel))
+            if list_mode == "whitelist":
+                return (False, "Channel not whitelisted!",
+                        f"If you think this is in error, ask a server admin to add {mention}"
                         f" to the Triggered whitelist.")
-                # If it's a whitelist and the channel is *not* there, then False
-            elif channel_blacklist[mode]["mode"] == "blacklist" and encoded_channel in channel_blacklist[mode]["value"]:
-                return (False, f"Channel blacklisted!",
-                        "If you think this is in error, ask a server admin"
-                        f" to remove {channel.mention} from the Triggered whitelist.")
-                # If it's a blacklist and the channel is there, then False
+            return (False, "Channel blacklisted!",
+                    "If you think this is in error, ask a server admin"
+                    f" to remove {mention} from the Triggered blacklist.")
 
-    # VALIDATE ROLE
-    if role_blacklist[mode] is not None:
-        for role in roles:
-            encoded_role = await DiscordPickler.encode_object(role)
-            if (role_blacklist[mode]["mode"] == "whitelist"
-                    and encoded_role not in role_blacklist[mode]["value"]):
-                return (False, f"Role not whitelisted!",
-                        f"If you think this is in error, ask a server admin to add {role.mention}"
+    for role in roles:
+        if role is None:
+            continue
+        encoded_role = await discord_pickler.encode_object(role)
+        if item_is_denied(encoded_role, role_list, default_allow=True):
+            list_mode = normalize_mode(role_list.get("mode")) if role_list else None
+            mention = getattr(role, "mention", str(role))
+            if list_mode == "whitelist":
+                return (False, "Role not whitelisted!",
+                        f"If you think this is in error, ask a server admin to add {mention}"
                         f" to the Triggered whitelist.")
-                # If it's a whitelist and the channel is *not* there, then False
-            elif (role_blacklist[mode]["mode"] == "blacklist"
-                  and encoded_role in role_blacklist[mode]["value"]):
-                return (False, f"Role blacklisted!",
-                        f"If you think this is in error, ask a server admin"
-                        f" to remove {role.mention} from the Triggered whitelist.")
-                # If it's a blacklist and the channel is there, then False
+            return (False, "Role blacklisted!",
+                    f"If you think this is in error, ask a server admin"
+                    f" to remove {mention} from the Triggered blacklist.")
 
     return True, "", ""
 
@@ -326,8 +301,15 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
     if not await is_allowed(ctx, f_log):
         return
 
-    permissions_valid, title, subheading = await check_permissions([trigger_role], [trigger_channel], trigger_member,
-                                                                   ctx.user, ctx.guild, "trigger")
+    if not name or not name.strip():
+        embed = generate_simple_embed("Trigger name can't be empty!",
+                                      "Please provide a name for this trigger.")
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    permissions_valid, title, subheading = await check_permissions(
+        [trigger_role], [trigger_channel, trigger_vc], trigger_member,
+        ctx.user, ctx.guild, "trigger")
 
     if not permissions_valid:  # If permissions aren't valid, we can just send the prepared error message along.
         embed = generate_simple_embed(title, subheading)
@@ -360,7 +342,7 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
                  "trigger_description": description}
 
     # Ensure validity
-    allowed, res = ValidateArguments.is_trigger_valid(variables, trigger.value, TRIGGER_REQUIREMENTS)
+    allowed, res = validate_arguments.is_trigger_valid(variables, trigger.value, TRIGGER_REQUIREMENTS)
     if not allowed:
         f_log.error(f"Failed to validate TRIGGER action (reason=\"{res}\")")
         embed = generate_simple_embed("Invalid arguments!", f"Reason: \"{res}\"")
@@ -371,10 +353,9 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
     # Encode variables
     n_var = {}
     for variable in variables.keys():
-        n_var[variable] = await DiscordPickler.encode_object(variables[variable])
+        n_var[variable] = await discord_pickler.encode_object(variables[variable])
 
-    valid = [col for col in list(watching_commands_access.list_collection_names()) if
-             col.split('.')[0] == str(ctx.guild.id)]
+    valid = [col for col, _ in iter_guild_collections(ctx.guild.id)]
     if str(ctx.guild.id) + "." + name in valid:
         f_log.error("Command already exists! Can't recreate unless deleted.")
         embed = generate_simple_embed(f"That command ({name}) already exists in this server!",
@@ -385,7 +366,7 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
 
     watching_commands_access[str(ctx.guild.id)][name].insert_one(n_var)
     watching_commands_access[str(ctx.guild.id)][name].insert_one(
-        {"type": "meta", "author": await DiscordPickler.encode_object(ctx.user)})
+        {"type": "meta", "author": await discord_pickler.encode_object(ctx.user)})
     watching_commands_access[str(ctx.guild.id)][name].insert_one(
         {"type": "tracker"})
     watching_commands_access[str(ctx.guild.id)][name].insert_one(
@@ -423,8 +404,15 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
     if not await is_allowed(ctx, f_log):
         return
 
-    permissions_valid, title, subheading = await check_permissions([do_role], [do_channel], do_member,
-                                                                   ctx.user, ctx.guild, "trigger")
+    if not trigger_name or not trigger_name.strip() or not do_name or not do_name.strip():
+        embed = generate_simple_embed("Trigger name and do name are required!",
+                                      "Please provide both `trigger_name` and `do_name`.")
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    permissions_valid, title, subheading = await check_permissions(
+        [do_role], [do_channel, do_vc], do_member,
+        ctx.user, ctx.guild, "do")
 
     if not permissions_valid:  # If permissions aren't valid, we can just send the prepared error message along.
         embed = generate_simple_embed(title, subheading)
@@ -433,6 +421,11 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
 
     # Length verification
     max_length = configuration['argument_length_limit']
+    if len(do_name) > max_length:
+        embed = generate_simple_embed(f"The name of this do must be length {max_length} or less.",
+                                      f"The current length is {len(do_name)}.")
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return
     if description is not None:
         if len(description) > max_length:
             embed = generate_simple_embed(f"The length of your description must be length {max_length} or less.",
@@ -451,37 +444,7 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
                  "type": "do", "do_vc": do_vc, "do_text": do_text, "do_role": do_role,
                  "do_emoji": do_emoji, "do_name": do_name, "do_description": description}
 
-    # Ensure that the ID isn't already in use.
-    if (watching_commands_access[str(ctx.guild.id)][trigger_name]
-            .find_one({"do_name": do_name}, {"_id": False, "type": False}) is not None):
-        f_log.error("Do ID already in use by this command!")
-        embed = generate_simple_embed(f"The ID ({do_name}) is already in use!",
-                                      "Try running this command again, but with a different Do ID"
-                                      " (`do_name` parameter)")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
-        return
-
-    # Get the type of the trigger
-    trigger_type = TRIGGER_REQUIREMENTS[dict(watching_commands_access[str(ctx.guild.id)][trigger_name]
-                                             .find_one({"type": "trigger"}, {"_id": False, "type": False}))[
-        "trigger_action_name"]]["type"]
-    # Encode variables
-    n_var = {}
-    for variable in variables.keys():
-        n_var[variable] = await DiscordPickler.encode_object(variables[variable])
-
-    # Validate variables
-    allowed, res = ValidateArguments.is_do_valid(variables, do.value, DO_REQUIREMENTS,
-                                                 trigger_type)
-    if not allowed:  # Not valid, exit now
-        f_log.error(f"Failed to validate DO action (reason=\"{res}\")")
-        embed = generate_simple_embed("Invalid arguments!",
-                                      f"Reason: \"{res}\"")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
-        return
-
-    valid = [col for col in list(watching_commands_access.list_collection_names()) if
-             col.split('.')[0] == str(ctx.guild.id)]
+    valid = [col for col, _ in iter_guild_collections(ctx.guild.id)]
     if str(ctx.guild.id) + "." + trigger_name in valid:  # Ensure that ID exists
         meta = watching_commands_access[str(ctx.guild.id)][trigger_name].find_one({"type": 'meta'}, {"_id": False,
                                                                                                      "type": False})
@@ -490,6 +453,34 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
 
         author_id = int(meta["author"][1])  # Get the author ID
         if ctx.user.id in [author_id, ctx.guild.owner_id]:  # Allow only the owner and the creator to edit
+            if (watching_commands_access[str(ctx.guild.id)][trigger_name]
+                    .find_one({"do_name": do_name}, {"_id": False, "type": False}) is not None):
+                f_log.error("Do ID already in use by this command!")
+                embed = generate_simple_embed(f"The ID ({do_name}) is already in use!",
+                                              "Try running this command again, but with a different Do ID"
+                                              " (`do_name` parameter)")
+                await ctx.response.send_message(embed=embed, ephemeral=True)
+                return
+            trigger_doc = watching_commands_access[str(ctx.guild.id)][trigger_name].find_one(
+                {"type": "trigger"}, {"_id": False, "type": False})
+            if trigger_doc is None:
+                f_log.warning("User attempted to access non-existent trigger!")
+                embed = generate_simple_embed(f"That trigger ({trigger_name}) doesn't exist!",
+                                              "Check your spelling.")
+                await ctx.response.send_message(embed=embed, ephemeral=True)
+                return
+            trigger_type = TRIGGER_REQUIREMENTS[trigger_doc["trigger_action_name"]]["type"]
+            n_var = {}
+            for variable in variables.keys():
+                n_var[variable] = await discord_pickler.encode_object(variables[variable])
+            allowed, res = validate_arguments.is_do_valid(variables, do.value, DO_REQUIREMENTS,
+                                                         trigger_type)
+            if not allowed:
+                f_log.error(f"Failed to validate DO action (reason=\"{res}\")")
+                embed = generate_simple_embed("Invalid arguments!",
+                                              f"Reason: \"{res}\"")
+                await ctx.response.send_message(embed=embed, ephemeral=True)
+                return
             if num_dos + 1 > MAX_DOS:
                 f_log.warning("Command full of dos!")
                 embed = generate_simple_embed(f"That trigger (\"{trigger_name}\")"
@@ -536,8 +527,7 @@ async def delete(ctx: discord.Interaction, to_delete: app_commands.Choice[str],
     if not await is_allowed(ctx, f_log):
         return
 
-    valid = [col for col in list(watching_commands_access.list_collection_names()) if
-             col.split('.')[0] == str(ctx.guild.id)]
+    valid = [col for col, _ in iter_guild_collections(ctx.guild.id)]
     if str(ctx.guild.id) + '.' + trigger_name not in valid:  # Trigger doesn't exist
         f_log.error("Invalid command to delete!")
         embed = generate_simple_embed(f"That command ({trigger_name}) doesn't exist in this server!",
@@ -614,14 +604,13 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
                                       f" something without an argument?)")
         await ctx.response.send_message(embed=embed, ephemeral=True)
         return
-    valid = [col for col in list(watching_commands_access.list_collection_names()) if
-             col.split('.')[0] == str(ctx.guild.id)]  # Pool of guild's triggers
+    valid = [col for col, _ in iter_guild_collections(ctx.guild.id)]  # Pool of guild's triggers
     data = []  # Data to send to the PaginationView
     if mode.value in ["search", "view-all"]:
         for index, command in enumerate(valid):  # for every command
 
             # Just some information about each command, gathered through MongoDB
-            cmd_id = command.split('.')[1]
+            cmd_id = command[len(str(ctx.guild.id)) + 1:]
             creator_id = dict(watching_commands_access[command].find_one(
                 {"type": "meta"}, {"_id": False, "type": False}))["author"][1]
             num_dos = list(watching_commands_access[command].find({"type": "do"}, {"_id": False,
@@ -671,7 +660,7 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
             else:
                 title_to_use = "Title Processing Error"
 
-            pagination_view = (PaginationView.PaginationView
+            pagination_view = (pagination_view.PaginationView
                                (timeout=None, title=title_to_use, data=data, author=ctx.user, embed_color=EMBED_COLOR))
             await pagination_view.send(ctx)
         else:  # There's no search results (or no triggers)
@@ -732,7 +721,7 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
                                    .find({"type": "do"}, {"_id": False, "type": False})):
             send_action = {}
             for a in action:
-                send_action.update({a: await DiscordPickler.decode_object(action[a], ctx.guild)})
+                send_action.update({a: await discord_pickler.decode_object(action[a], ctx.guild)})
             actions += (":arrow_right:   " +
                         await DO_REQUIREMENTS[action["do_action_name"]]['class']
                         .human(send_action, dropdown) + '\n')
@@ -756,7 +745,8 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
 async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
                        variables: dict, human_readable: dict, db_access_loc: str,
                        command_mode: str, conf_option_value: str, conf_option_name: str,
-                       default_blacklist_mode="blacklist") -> None:
+                       default_blacklist_mode="blacklist", collection_id: str = None,
+                       require_admin: bool = True, command_label: str = "server-configure") -> None:
     """
     The handler for /triggered user-configure and /triggered server-configure
     :param ctx: The discord.Interaction to respond to
@@ -769,6 +759,9 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
     :param conf_option_name: The human-readable name of the chosen configuration option to edit
     :param default_blacklist_mode: What the default blacklist mode is for the command (user-conf is whitelist,
      server-conf is blacklist)
+    :param collection_id: Mongo collection name (guild id for server config, user id for user config)
+    :param require_admin: Whether Discord Administrator is required
+    :param command_label: Slash command name used in the success copy
     :return: None
     """
     if not IS_ACTIVE:  # If the bot isn't online, just quit
@@ -785,7 +778,7 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
         f_log.warning("Bot users are not allowed to use commands.")
         return
 
-    if not ctx.user.guild_permissions.administrator:  # If you aren't admin, you can't use this command. Period.
+    if require_admin and not ctx.user.guild_permissions.administrator:
         await ctx.response.send_message(embed=generate_simple_embed("Insufficient permissions!",
                                                                     "You must have the permission"
                                                                     " \"Administrator\" in this server"
@@ -793,8 +786,13 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
                                         ephemeral=True)
         return
 
+    if collection_id is None:
+        collection_id = str(ctx.guild.id)
+    config_collection = db_client[db_access_loc][collection_id]
+    default_mode = normalize_mode(default_blacklist_mode) or "blacklist"
+
     # Get the value of the current position, or None if it doesn't exist
-    current_value_dict = (db_client[db_access_loc][str(ctx.guild.id)]
+    current_value_dict = (config_collection
                           .find_one({"type": conf_option_value},
                                     {"type": False, "_id": False}))
 
@@ -812,14 +810,14 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
         if current_value_dict is not None:  # The value already exists in the DB
             current_value_dict = dict(current_value_dict)
             current_value = current_value_dict["value"]  # The DB value
-            mode = current_value_dict["mode"]  # The DB mode
+            mode = normalize_mode(current_value_dict.get("mode")) or default_mode
             exists = True  # mark existence
         else:
             # Default value of blacklist parameter
             current_value = []
-            mode = default_blacklist_mode.capitalize()
+            mode = default_mode
             exists = False  # mark nonexistence
-        new_addition = await DiscordPickler.encode_object(active_variable)  # Encode the active variable
+        new_addition = await discord_pickler.encode_object(active_variable)  # Encode the active variable
         if new_addition in current_value:  # If it's already in the DB, throw an error at the user.
             embed = generate_simple_embed(f"That {human_readable_value}"
                                           f" is already a member "
@@ -828,44 +826,42 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
             return
         current_value.append(new_addition)  # Add to DB list
         if exists:  # If it exists, use .replace_one
-            (db_client[db_access_loc][str(ctx.guild.id)]
+            (config_collection
              .replace_one({"type": conf_option_value},
                           {"value": current_value, "type": conf_option_value, "mode": mode}))
         else:  # If it doesn't, use .insert_one
-            db_client[db_access_loc][str(ctx.guild.id)].insert_one({"type": conf_option_value,
-                                                                    "value": current_value, "mode": mode})
+            config_collection.insert_one({"type": conf_option_value,
+                                          "value": current_value, "mode": mode})
 
     elif command_mode == "update" and not is_blacklist:
         # Case with update, but not blacklist mode (single object)
-        new_addition = await DiscordPickler.encode_object(active_variable)  # Encode the active variable
+        new_addition = await discord_pickler.encode_object(active_variable)  # Encode the active variable
         if current_value_dict is not None:  # If it exists, use replace_one
-            (db_client[db_access_loc][str(ctx.guild.id)]
+            (config_collection
              .replace_one({"type": conf_option_value},
                           {"value": new_addition, "type": conf_option_value}))
         else:  # Otherwise, use insert_one
-            db_client[db_access_loc][str(ctx.guild.id)].insert_one({"type": conf_option_value,
-                                                                    "value": new_addition})
+            config_collection.insert_one({"type": conf_option_value,
+                                          "value": new_addition})
 
     elif command_mode == "switch" and not is_blacklist:
         # You can't switch a non-blacklist mode!
         embed = generate_simple_embed("You can't switch white/blacklist on a non white/blacklist!",
                                       "Use a list (like Role White/Blacklist)")
-        await ctx.response.send_message(embed=embed)
+        await ctx.response.send_message(embed=embed, ephemeral=True)
 
     elif command_mode == "switch" and is_blacklist:
         # You can switch a white/blacklist
         if current_value_dict is not None:
-            if current_value_dict["mode"] == "blacklist":
-                mode = "whitelist"
-            else:
-                mode = "blacklist"
-            (db_client[db_access_loc][str(ctx.guild.id)]
+            current_mode = normalize_mode(current_value_dict.get("mode")) or default_mode
+            mode = "whitelist" if current_mode == "blacklist" else "blacklist"
+            (config_collection
              .replace_one({"type": conf_option_value},
                           {"type": conf_option_value, "mode": mode,
                            "value": current_value_dict["value"]}))
         else:
-            db_client[db_access_loc][str(ctx.guild.id)].insert_one({"type": conf_option_value,
-                                                                    "mode": "blacklist", "value": []})
+            config_collection.insert_one({"type": conf_option_value,
+                                          "mode": default_mode, "value": []})
 
     elif command_mode == "get" and is_blacklist:
         # Get a blacklist
@@ -873,17 +869,17 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
         all_permissions = ""
         v_permissions = []
         if current_value_dict is not None:
-            mode = current_value_dict["mode"]
+            mode = normalize_mode(current_value_dict.get("mode")) or default_mode
             for item in current_value_dict["value"]:
                 try:
-                    decoded = await DiscordPickler.decode_object(item, ctx.guild)
+                    decoded = await discord_pickler.decode_object(item, ctx.guild)
                     if decoded is not None:  # check dead channels
                         v_permissions.append(item)
                         all_permissions += ":arrow_right:   " + decoded.mention + "\n"
                 except discord.NotFound:
                     continue
         else:
-            mode = default_blacklist_mode.capitalize()  # Display default mode
+            mode = default_mode
         if all_permissions:
             all_permissions = all_permissions[:-1]
         else:
@@ -897,7 +893,7 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
         # Get a single value
         if current_value_dict is not None:
             current_value_dict = dict(current_value_dict)
-            decoded = await DiscordPickler.decode_object(current_value_dict["value"], ctx.guild)
+            decoded = await discord_pickler.decode_object(current_value_dict["value"], ctx.guild)
             if decoded is None:
                 v = "None"
             else:
@@ -918,7 +914,7 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
             await ctx.response.send_message(embed=embed, ephemeral=True)
             return
         else:
-            db_client[db_access_loc][str(ctx.guild.id)].delete_one({"type": conf_option_value})
+            config_collection.delete_one({"type": conf_option_value})
             embed = generate_simple_embed(f"Successfully deleted setting!",
                                           "Thanks for the storage space! :D")
             await ctx.response.send_message(embed=embed, ephemeral=True)
@@ -932,7 +928,7 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
                 await ctx.response.send_message(embed=embed, ephemeral=True)
                 return
             else:
-                db_client[db_access_loc][str(ctx.guild.id)].delete_one({"type": conf_option_value})
+                config_collection.delete_one({"type": conf_option_value})
                 embed = generate_simple_embed(f"Successfully deleted {current_value_dict['mode']}"
                                               f" \"{conf_option_name}!\"",
                                               "Thanks for the storage space! :D")
@@ -947,15 +943,15 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
                 return
             else:
                 current_value_dict = dict(current_value_dict)
-                encoded_object = await DiscordPickler.encode_object(active_variable)
+                encoded_object = await discord_pickler.encode_object(active_variable)
                 if encoded_object in current_value_dict["value"]:  # If the item is in the white/blacklist
                     new_value = current_value_dict["value"]  # Obtain the existing list
                     new_value.remove(encoded_object)  # Remove current value
                     # Replace value vvv
-                    (db_client[db_access_loc][str(ctx.guild.id)]
+                    (config_collection
                      .replace_one({"type": conf_option_value},
                                   {"type": conf_option_value,
-                                   "mode": current_value_dict["mode"],
+                                   "mode": normalize_mode(current_value_dict.get("mode")) or default_mode,
                                    "value": new_value}))
                     embed = generate_simple_embed(f"Successfully deleted item"
                                                   f" {active_variable.mention}"
@@ -974,7 +970,7 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
     await ctx.response.send_message(embed=generate_simple_embed("Successfully updated permissions!",
                                                                 "Make sure to double-check that the new"
                                                                 " configuration is what you want it to be by "
-                                                                "using */triggered server-configure Get*."),
+                                                                f"using */triggered {command_label} Get*."),
                                     ephemeral=True)
 
 
@@ -1008,7 +1004,8 @@ async def server_configure(ctx: discord.Interaction, command_mode: app_commands.
                       "ch_blacklist_do": "channel", "role_blacklist_do": "role"}
 
     await configurator(ctx, configuration_dictionary, variables, human_readable, "server-configuration",
-                       command_mode.value, configuration_option.value, configuration_option.name)
+                       command_mode.value, configuration_option.value, configuration_option.name,
+                       collection_id=str(ctx.guild.id), require_admin=True, command_label="server-configure")
 
 
 @triggered.command(name="user-configure", description="Configure Triggered for yourself!")
@@ -1034,138 +1031,147 @@ async def user_configure(ctx: discord.Interaction, command_mode: app_commands.Ch
     # Get the type each parameter is using
     human_readable = {"user_blacklist_trigger": "member", "user_blacklist_do": "member"}
 
+    f_log = log.getChild("user-configure")
+    if not await is_allowed(ctx, f_log, require_permission_role=False):
+        return
+
     await configurator(ctx, configuration_dictionary, variables, human_readable, "user-configuration",
                        command_mode.value, configuration_option.value, configuration_option.name,
-                       default_blacklist_mode="whitelist")
+                       default_blacklist_mode="whitelist", collection_id=str(ctx.user.id),
+                       require_admin=False, command_label="user-configure")
 
 
-async def handle(id_type: str, creator: discord.Member = None, guild: discord.Guild = None, other=None) -> None:
+async def handle(id_type: str, creator: discord.Member = None, guild: discord.Guild = None, other=None,
+                 event_channel=None) -> None:
     """
     Handle a generic trigger firing.
     :param id_type: The type of the trigger
     :param creator: The discord.Member responsible for the action
     :param guild: The guild the command is in
     :param other: Other relevant data (passed through to Do.execute())
+    :param event_channel: The channel the event happened in, if any
     :return: None
     """
     f_log = log.getChild(f"event_handler.{id_type}")
-    if creator.bot:  # Don't allow bots to activate anything
+    if creator is None or creator.bot:  # Don't allow bots to activate anything
         f_log.debug("Ignoring bot creator.")
         return
     what_happened = {}
-    for database_id in [col for col in list(watching_commands_access.list_collection_names()) if
-                        col.split('.')[0] == str(guild.id)]:  # Iterate through each command that this guild has
+    for database_id, trigger in iter_guild_collections(guild.id):
         start_scan = time.time()
-        trigger = database_id.split('.')[1]  # The command name
-        what_happened[database_id] = f"Trigger was activated by user \"{creator.global_name}\" (id={creator.id}).\n"
-        trigger_dict = dict(watching_commands_access[str(guild.id)][trigger]
-                            .find_one({"type": "trigger"}, {'_id': False, "type": False}))  # Trigger data
+        trigger_doc = watching_commands_access[database_id].find_one({"type": "trigger"}, {'_id': False, "type": False})
+        if trigger_doc is None:
+            continue
+        trigger_dict = dict(trigger_doc)
         submit_trigger_dict = {}
         for item in trigger_dict.keys():
-            submit_trigger_dict.update({item: await DiscordPickler.decode_object(trigger_dict[item], guild)})
-        if TRIGGER_REQUIREMENTS[submit_trigger_dict["trigger_action_name"]]["type"] == id_type:
+            submit_trigger_dict.update({item: await discord_pickler.decode_object(trigger_dict[item], guild)})
+        if TRIGGER_REQUIREMENTS.get(submit_trigger_dict.get("trigger_action_name"), {}).get("type") != id_type:
+            continue
+        what_happened[database_id] = f"Trigger was activated by user \"{creator.global_name}\" (id={creator.id}).\n"
+        try:
+            start_time = time.time()
+            permissions_valid, title, description \
+                = await check_permissions([submit_trigger_dict.get("trigger_role")],
+                                          [submit_trigger_dict.get("trigger_channel"),
+                                           submit_trigger_dict.get("trigger_vc")],
+                                          submit_trigger_dict.get("trigger_member"),
+                                          creator, guild, "trigger",
+                                          event_channel=event_channel)
+            if not permissions_valid:
+                what_happened[database_id] \
+                    += f"Permissions are invalid (is-valid)!\nTitle: {title}\nDescription: {description}"
+                continue
             try:
-                start_time = time.time()
-                permissions_valid, title, description \
-                    = await check_permissions([submit_trigger_dict["trigger_role"]],
-                                              [submit_trigger_dict["trigger_channel"],
-                                               submit_trigger_dict["trigger_vc"]],
-                                              submit_trigger_dict["trigger_member"],
-                                              creator, guild, "trigger")
-                if not permissions_valid:
-                    what_happened[database_id] \
-                        += f"Permissions are invalid (is-valid)!\nTitle: {title}\nDescription: {description}"
-                    continue
-                try:
-                    is_valid = await (TRIGGER_REQUIREMENTS[submit_trigger_dict["trigger_action_name"]]["class"]
-                                      .is_valid(submit_trigger_dict, other))
-                except Exception as execution_error:
-                    what_happened[database_id] += \
-                        (f"{TRIGGER_REQUIREMENTS[submit_trigger_dict['trigger_action_name']]['class'].__name__}"
-                         f".is_valid call raised an exception: name={type(execution_error)}, value={execution_error}."
-                         f" Execution time was {time.time() - start_time} before crash.")
-                    continue
-                exec_time = time.time() - start_time
-                if type(is_valid) is not bool:
-                    what_happened[database_id] += (
-                        f"{TRIGGER_REQUIREMENTS[submit_trigger_dict['trigger_action_name']]['class'].__name__}"
-                        f".is_valid() returned a non-bool type. This type was {type(is_valid)}."
-                        f" Arguments passed were submit_trigger_dict={submit_trigger_dict}"
-                        f" and other={other}. Execution time was {exec_time}.")
-                    continue
-                what_happened[database_id] += (f"Successfully checked for is_valid."
-                                               f" Execution time was {exec_time}.\n")
-                if is_valid:
-                    watching_commands_access[database_id].update_one({"type": "tracker"},
-                                                                     {"$inc": {str(creator.id): 1}})
-                    # The do data from the DB
-                    pre_dos = list(watching_commands_access[str(guild.id)][trigger]
-                                   .find({"type": "do"}, {'_id': False, 'type': False}))
+                is_valid = await (TRIGGER_REQUIREMENTS[submit_trigger_dict["trigger_action_name"]]["class"]
+                                  .is_valid(submit_trigger_dict, other))
+            except Exception as execution_error:
+                what_happened[database_id] += \
+                    (f"{TRIGGER_REQUIREMENTS[submit_trigger_dict['trigger_action_name']]['class'].__name__}"
+                     f".is_valid call raised an exception: name={type(execution_error)}, value={execution_error}."
+                     f" Execution time was {time.time() - start_time} before crash.")
+                continue
+            exec_time = time.time() - start_time
+            if type(is_valid) is not bool:
+                what_happened[database_id] += (
+                    f"{TRIGGER_REQUIREMENTS[submit_trigger_dict['trigger_action_name']]['class'].__name__}"
+                    f".is_valid() returned a non-bool type. This type was {type(is_valid)}."
+                    f" Arguments passed were submit_trigger_dict={submit_trigger_dict}"
+                    f" and other={other}. Execution time was {exec_time}.")
+                continue
+            what_happened[database_id] += (f"Successfully checked for is_valid."
+                                           f" Execution time was {exec_time}.\n")
+            if is_valid:
+                watching_commands_access[database_id].update_one({"type": "tracker"},
+                                                                 {"$inc": {str(creator.id): 1}})
+                pre_dos = list(watching_commands_access[database_id]
+                               .find({"type": "do"}, {'_id': False, 'type': False}))
 
-                    # Decode the "dos" section of the DB
-                    submit_dos = []
-                    for do in pre_dos:
-                        temp_thing = {}
-                        for ky in do.keys():
-                            temp_thing.update({ky: await DiscordPickler.decode_object(do[ky], guild)})
-                        submit_dos.append(temp_thing)
+                submit_dos = []
+                for do in pre_dos:
+                    temp_thing = {}
+                    for ky in do.keys():
+                        temp_thing.update({ky: await discord_pickler.decode_object(do[ky], guild)})
+                    submit_dos.append(temp_thing)
 
-                    # Decode the "meta" section of the DB
-                    meta = dict(watching_commands_access[str(guild.id)][trigger]
-                                .find_one({"type": "meta"}, {'_id': False, 'type': False}))
-                    submit_meta = {}
-                    for item in meta.keys():
-                        submit_meta.update({item: await DiscordPickler.decode_object(meta[item], guild)})
+                meta = dict(watching_commands_access[database_id]
+                            .find_one({"type": "meta"}, {'_id': False, 'type': False}) or {})
+                submit_meta = {}
+                for item in meta.keys():
+                    submit_meta.update({item: await discord_pickler.decode_object(meta[item], guild)})
 
-                    submit_tracker = dict(watching_commands_access[str(guild.id)][trigger]
-                                          .find_one({"type": "tracker"}, {'_id': False, 'type': False}))
-                    what_happened[database_id] += f"Number of dos to execute: {len(submit_dos)}.\n"
-                    for identification in submit_dos:
-                        # Compile the data together
-                        data = {"do": identification, "dos": submit_dos, "trigger": submit_trigger_dict,
-                                "meta": submit_meta,
-                                "tracker": submit_tracker}
-                        # Perform the execution
-                        try:
-                            start_time = time.time()
-                            # Check do permissions
-                            permissions_valid, title, description \
-                                = await check_permissions([identification["do_role"]],
-                                                          [identification["do_channel"],
-                                                           identification["do_vc"]],
-                                                          identification["do_member"],
-                                                          creator, guild, "do")
-                            if not permissions_valid:
-                                what_happened[database_id] \
-                                    += f"""Permissions are invalid ({DO_REQUIREMENTS[identification['do_action_name']]
-                                ['class'].__name__}.execute)!, Title: {title}, Description: {description}"""
-                                continue
-                            await (DO_REQUIREMENTS[identification["do_action_name"]]["class"]
-                                   .execute(data, client, guild, creator, other_discord_data=other))
-                            exec_time = time.time() - start_time
-                            what_happened[database_id] += (
-                                f"{DO_REQUIREMENTS[identification['do_action_name']]['class'].__name__}.execute"
-                                f" completed successfully."
-                                f" Execution time was {exec_time}.\n")
-                        except Exception as execution_error:
-                            what_happened[database_id] += \
-                                (f" {DO_REQUIREMENTS[identification['do_action_name']]['class'].__name__}"
-                                 f".execute call raised an exception: name={type(execution_error)},"
-                                 f" value={execution_error}."
-                                 f" Execution time was {time.time() - start_time} before crash.\n")
-                    what_happened[database_id] += (f"Completed trigger \"{trigger}.\""
-                                                   f" Total exec time was {time.time() - start_scan}.\n")
-                    what_happened[database_id] = what_happened[database_id][:-1]  # Remove trailing newline
-                else:
-                    what_happened[database_id] = ""
-            except KeyError as ke:
-                f_log.warning(f"Failed is_valid check!\n{ke}")
-        for wh in what_happened:
-            if what_happened[wh]:
-                result = watching_commands_access[wh].replace_one({"type": "last_exec"},
-                                                                  {"value": what_happened[wh], "type": "last_exec"})
-                if result.modified_count == 0:
-                    watching_commands_access[wh].insert_one({"value": what_happened[wh], "type": "last_exec"})
+                submit_tracker = dict(watching_commands_access[database_id]
+                                      .find_one({"type": "tracker"}, {'_id': False, 'type': False}) or {})
+                what_happened[database_id] += f"Number of dos to execute: {len(submit_dos)}.\n"
+                for identification in submit_dos:
+                    data = {"do": identification, "dos": submit_dos, "trigger": submit_trigger_dict,
+                            "meta": submit_meta,
+                            "tracker": submit_tracker}
+                    try:
+                        start_time = time.time()
+                        permissions_valid, title, description \
+                            = await check_permissions([identification.get("do_role")],
+                                                      [identification.get("do_channel"),
+                                                       identification.get("do_vc")],
+                                                      identification.get("do_member"),
+                                                      creator, guild, "do")
+                        if not permissions_valid:
+                            what_happened[database_id] \
+                                += f"""Permissions are invalid ({DO_REQUIREMENTS[identification['do_action_name']]
+                            ['class'].__name__}.execute)!, Title: {title}, Description: {description}"""
+                            continue
+                        await (DO_REQUIREMENTS[identification["do_action_name"]]["class"]
+                               .execute(data, client, guild, creator, other_discord_data=other))
+                        exec_time = time.time() - start_time
+                        what_happened[database_id] += (
+                            f"{DO_REQUIREMENTS[identification['do_action_name']]['class'].__name__}.execute"
+                            f" completed successfully."
+                            f" Execution time was {exec_time}.\n")
+                    except Exception as execution_error:
+                        what_happened[database_id] += \
+                            (f" {DO_REQUIREMENTS[identification['do_action_name']]['class'].__name__}"
+                             f".execute call raised an exception: name={type(execution_error)},"
+                             f" value={execution_error}."
+                             f" Execution time was {time.time() - start_time} before crash.\n")
+                what_happened[database_id] += (f"Completed trigger \"{trigger}.\""
+                                               f" Total exec time was {time.time() - start_scan}.\n")
+                what_happened[database_id] = what_happened[database_id][:-1]  # Remove trailing newline
+            else:
+                what_happened[database_id] = ""
+        except KeyError as ke:
+            f_log.warning(f"Failed is_valid check!\n{ke}")
+
+    for wh in what_happened:
+        if what_happened[wh]:
+            result = watching_commands_access[wh].replace_one({"type": "last_exec"},
+                                                              {"value": what_happened[wh], "type": "last_exec"})
+            if result.modified_count == 0:
+                watching_commands_access[wh].insert_one({"value": what_happened[wh], "type": "last_exec"})
+
+
+@client.event
+async def on_ready() -> None:
+    log.info(f"Logged in as {client.user} (id={client.user.id})")
 
 
 @client.event
@@ -1221,7 +1227,7 @@ async def on_message(msg: discord.Message) -> None:
         return
     f_log.debug(f'Event "on_message" has been triggered! (server="{msg.guild.name}", server_id={msg.guild.id},'
                 f' member={msg.author.global_name}, member_id={msg.author.id})')
-    await handle("send_msg", msg.author, msg.guild, msg)
+    await handle("send_msg", msg.author, msg.guild, msg, event_channel=msg.channel)
 
 
 @client.event
@@ -1232,10 +1238,20 @@ async def on_raw_reaction_add(ctx: discord.RawReactionActionEvent) -> None:
     :return: None
     """
     f_log = log.getChild("event.reaction_add")
+    if ctx.guild_id is None:
+        return
     event_guild = await client.fetch_guild(ctx.guild_id)
+    event_channel = event_guild.get_channel(ctx.channel_id)
+    if event_channel is None:
+        try:
+            event_channel = await event_guild.fetch_channel(ctx.channel_id)
+        except discord.NotFound:
+            event_channel = None
+    if ctx.member is None:
+        return
     f_log.debug(f'Event "reaction_add" has been triggered! (server="{event_guild.name}", server_id={event_guild.id},'
                 f' member={ctx.member.global_name}, member_id={ctx.member.id})')
-    await handle("reaction_add", ctx.member, event_guild, ctx.emoji)
+    await handle("reaction_add", ctx.member, event_guild, ctx.emoji, event_channel=event_channel)
 
 
 @client.event
@@ -1246,14 +1262,26 @@ async def on_raw_reaction_remove(ctx: discord.RawReactionActionEvent) -> None:
     :return: None
     """
     f_log = log.getChild("event.reaction_remove")
+    if ctx.guild_id is None:
+        return
     event_guild = await client.fetch_guild(ctx.guild_id)
     identity = ctx.user_id
     u_obj = event_guild.get_member(identity)
     if u_obj is None:
-        u_obj = await event_guild.fetch_member(identity)
+        try:
+            u_obj = await event_guild.fetch_member(identity)
+        except discord.NotFound:
+            f_log.debug("Reaction removed by a user who is no longer in the guild.")
+            return
+    event_channel = event_guild.get_channel(ctx.channel_id)
+    if event_channel is None:
+        try:
+            event_channel = await event_guild.fetch_channel(ctx.channel_id)
+        except discord.NotFound:
+            event_channel = None
     f_log.debug(f'Event "reaction_remove" has been triggered! (server="{event_guild.name}", server_id={event_guild.id},'
                 f' member={u_obj.global_name}, member_id={u_obj.id})')
-    await handle("reaction_remove", u_obj, event_guild, ctx.emoji)
+    await handle("reaction_remove", u_obj, event_guild, ctx.emoji, event_channel=event_channel)
 
 
 @client.event
@@ -1271,11 +1299,11 @@ async def on_voice_state_update(member: discord.Member,
     if before.channel != after.channel and after.channel is not None:
         f_log.debug(f'Event "vc_join" has been triggered! (server={member.guild.name}, server_id={member.guild.id},'
                     f' member={member.global_name}, member_id={member.id})')
-        await handle("vc_join", member, member.guild, [before, after])
+        await handle("vc_join", member, member.guild, [before, after], event_channel=after.channel)
     if before.channel != after.channel and after.channel is None:
         f_log.debug(f'Event "vc_leave" has been triggered! (server={member.guild.name}, server_id={member.guild.id},'
                     f' member={member.global_name}, member_id={member.id})')
-        await handle("vc_leave", member, member.guild, [before, after])
+        await handle("vc_leave", member, member.guild, [before, after], event_channel=before.channel)
 
 
 @client.event
@@ -1300,8 +1328,7 @@ async def on_member_remove(member: discord.Member) -> None:
     """
     f_log = log.getChild("event.member_leave")
     f_log.info(f"Dropping all triggers from user \"{member.name}\" (id={member.id})")
-    valid = [col for col in list(watching_commands_access.list_collection_names()) if
-             col.split('.')[0] == str(member.guild.id)]
+    valid = [col for col, _ in iter_guild_collections(member.guild.id)]
 
     dropped = 0
     for command_to_remove in valid:
@@ -1332,8 +1359,8 @@ async def on_guild_join(guild: discord.Guild) -> None:
                                       " use the bot. For that, please check the README (linked below).",
                           color=EMBED_COLOR)
     embed.add_field(name="What is this bot?",
-                    value="Triggered is a IFTTT bot (if-this-then-that) bot designed for programmable triggers"
-                          " of everything from a message sent to an article posted online.")
+                    value="Triggered is an if-this-then-that bot for Discord. Create a trigger for a message,"
+                          " reaction, voice-channel, or member join/leave event, then attach one or more actions.")
     embed.add_field(name="I'm a developer - How do I make my custom triggers?",
                     value="If you think you have an idea,"
                           " please go to the [GitHub](https://github.com/quantumbagel/Triggered)"
@@ -1367,8 +1394,7 @@ async def on_guild_remove(guild: discord.Guild) -> None:
     """
     f_log = log.getChild("event.guild_remove")
     f_log.info(f"Dropping all triggers from guild \"{guild.name}\" (id={guild.id})")
-    valid = [col for col in list(watching_commands_access.list_collection_names()) if
-             col.split('.')[0] == str(guild.id)]
+    valid = [col for col, _ in iter_guild_collections(guild.id)]
     for command_to_remove in valid:
         watching_commands_access.drop_collection(command_to_remove)
     f_log.info(f"Dropped {len(valid)} commands.")

@@ -3,6 +3,14 @@ import math
 import logging
 
 
+def page_slice(data: list, current_page: int, sep: int) -> list:
+    """Return the slice of data that belongs on current_page (1-indexed)."""
+    if current_page < 1 or sep < 1:
+        return []
+    from_item = (current_page - 1) * sep
+    return data[from_item:from_item + sep]
+
+
 class PaginationView(discord.ui.View):
     current_page: int = 1
     sep: int = 3
@@ -18,6 +26,8 @@ class PaginationView(discord.ui.View):
         :param author: the author of the message.
         """
         super().__init__(timeout=timeout)
+        self.current_page = 1
+        self.sep = 3
         self.title = title
         self.author = author
         self.data = data
@@ -95,15 +105,7 @@ class PaginationView(discord.ui.View):
             self.next_button.style = discord.ButtonStyle.primary
 
     def get_current_page_data(self):
-        until_item = self.current_page * self.sep
-        from_item = until_item - self.sep
-        if not self.current_page == 1:
-            from_item = 0
-            until_item = self.sep
-        if self.current_page == math.ceil(len(self.data) / self.sep):
-            from_item = self.current_page * self.sep - self.sep
-            until_item = len(self.data)
-        return self.data[from_item:until_item]
+        return page_slice(self.data, self.current_page, self.sep)
 
     # These are the buttons and what they do.
 

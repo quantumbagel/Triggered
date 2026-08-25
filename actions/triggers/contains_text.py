@@ -1,8 +1,9 @@
 import discord
-import actions.triggers.Trigger as Trigger
+
+from actions.triggers.trigger import Trigger
 
 
-class ContainsTextTrigger(Trigger.Trigger):
+class ContainsTextTrigger(Trigger):
     async def human(variables: dict):
         return f"Message sent containing the text \"{variables['trigger_text']}.\""
 

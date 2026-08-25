@@ -1,8 +1,9 @@
 import discord
-import actions.triggers.Trigger as Trigger
+
+from actions.triggers.trigger import Trigger
 
 
-class JoinedVCTrigger(Trigger.Trigger):
+class JoinedVCTrigger(Trigger):
     async def human(variables: dict):
         return f"Somebody joined the VC :loud_sound: {variables['trigger_vc']}."
 

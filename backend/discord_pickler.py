@@ -1,24 +1,18 @@
-import json
-import logging
-
 import discord
-from discord import errors
-
-log = logging.getLogger()
 
 
 async def encode_object(discord_object):
     """
-    Encode discord objects (Role, TextChannel, VoiceChannel, Member)
+    Encode discord objects (Role, GuildChannel, Member)
     :param discord_object: The discord object
     :return: the encoded object
     """
 
-    if type(discord_object).__name__ == "Role":
+    if isinstance(discord_object, discord.Role):
         return ["role", discord_object.id]
-    if type(discord_object).__name__ in ["TextChannel", "VoiceChannel"]:
+    if isinstance(discord_object, discord.abc.GuildChannel):
         return ["channel", discord_object.id]
-    if type(discord_object).__name__ == "Member":
+    if isinstance(discord_object, discord.Member):
         return ["member", discord_object.id]
     return discord_object
 

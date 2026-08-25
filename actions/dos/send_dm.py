@@ -1,14 +1,18 @@
 import discord
-from backend import GetTriggerDo
-import actions.dos.Do as Do
+
+from actions.dos.do import Do
+from backend import get_trigger_do
 
 
-class SendMessageDo(Do.Do):
+class SendDMDo(Do):
     async def human(variables: dict, trigger_id: str):
-        return f"Sent message to #{variables['do_channel'].name}."
+        member = variables.get("do_member")
+        if member is None:
+            return "Sent a DM to a member who is no longer in this server."
+        return f"Sent message to @{member.name}."
 
     async def execute(data: dict, client, guild: discord.Guild, author: discord.Member, other_discord_data=None):
-        trigger_requirements, do_requirements = GetTriggerDo.get_trigger_do()
+        trigger_requirements, do_requirements = get_trigger_do.get_trigger_do()
         embed = discord.Embed(title=f"Rule triggered by {author.global_name} (@{author.name})",
                               color=discord.Color.from_rgb(255, 87, 51))
         embed.set_thumbnail(url=author.avatar)
@@ -17,7 +21,7 @@ class SendMessageDo(Do.Do):
                         value=await trigger_requirements[data["trigger"]["trigger_action_name"]]['class'].human(
                             data["trigger"]))
         embed.add_field(name="Triggered:",
-                        value=data["tracker"][str(author.id)])
+                        value=data["tracker"].get(str(author.id), 1))
         actions = ''
         for action in data['dos']:
             actions += (":arrow_right:   " +
@@ -30,7 +34,8 @@ class SendMessageDo(Do.Do):
                             value=f"[{other_discord_data.content}]({other_discord_data.jump_url})")
         embed.set_footer(icon_url="https://avatars.githubusercontent.com/u/58365715",
                          text="Made with ❤ by @quantumbagel")
-        await data['do']['do_channel'].send(embed=embed)
+        await data['do']['do_member'].send(embed=embed)
+
 
     def dropdown_name(self):
-        return "Send Message"
+        return "Send DM"
