@@ -20,7 +20,7 @@ This repository is at **v1.0 RC1**. The public branch is [`main`](https://github
 
 ## Requirements
 
-- Python **3.10+**
+- Python 3.10+
 - A running **MongoDB** instance (local is strongly recommended; this bot talks to the database a lot)
 - A Discord application/bot with these **Privileged Gateway Intents** enabled:
   - Server Members Intent
@@ -57,17 +57,17 @@ python bot.py
 
 All runtime settings live in `configuration/config.json`.
 
-| Key | Type | Meaning |
-| --- | --- | --- |
-| `bot_secret` | string | Discord bot token. Keep this private. |
-| `mongodb_uri` | string | MongoDB connection string. |
-| `owner_id` | int | Discord user ID allowed to run owner text commands (`triggered/sync`, enable/disable). |
-| `max_dos_per_trigger` | int | Maximum actions that can be attached to one trigger. Default: `3`. |
-| `argument_length_limit` | int | Max length for names, descriptions, and text arguments. Default: `128`. |
-| `allowed_execution` | int | Reserved for execution limits. |
-| `check_for_updates` | bool | On startup, fetch the remote and warn if a newer commit exists. |
-| `auto_update` | bool | If an update is available, check out the configured stream, pull, and exit so a process manager can restart you. |
-| `update_to` | string | Git branch to follow: `main`, `stable`, or `dev`. |
+| Key                     | Type   | Meaning                                                                                                          |
+|-------------------------|--------|------------------------------------------------------------------------------------------------------------------|
+| `bot_secret`            | string | Discord bot token.                                                                                               |
+| `mongodb_uri`           | string | MongoDB connection string.                                                                                       |
+| `owner_id`              | int    | Discord user ID allowed to run owner text commands (`triggered/sync`, enable/disable).                           |
+| `max_dos_per_trigger`   | int    | Maximum actions that can be attached to one trigger. Default: `3`.                                               |
+| `argument_length_limit` | int    | Max length for names, descriptions, and text arguments. Default: `128`.                                          |
+| `allowed_execution`     | int    | Reserved for execution limits.                                                                                   |
+| `check_for_updates`     | bool   | On startup, fetch the remote and warn if a newer commit exists.                                                  |
+| `auto_update`           | bool   | If an update is available, check out the configured stream, pull, and exit so a process manager can restart you. |
+| `update_to`             | string | Git branch to follow: `main`, `stable`, or `dev`.                                                                |
 
 `configuration/requirements.json` is **not** server config. It maps trigger/do IDs to Python classes so the bot can load them dynamically.
 
@@ -116,17 +116,17 @@ These only work if your Discord user ID matches `owner_id`.
 
 Pass the matching `/triggered new` argument for each type.
 
-| Dropdown name | ID | Event | Required argument |
-| --- | --- | --- | --- |
-| Contains Text | `contains-text` | Message sent | `trigger_text` — substring match |
-| Contains Word | `contains-word` | Message sent | `trigger_text` — whole-word match |
-| Role Mentioned | `role-mentioned` | Message sent | `trigger_role` |
-| Reaction Added | `reaction-added` | Reaction added | `trigger_emoji` |
-| Reaction Removed | `reaction-removed` | Reaction removed | `trigger_emoji` |
-| Joined VC Channel | `join-vc` | Member joins voice | `trigger_vc` |
-| Left VC Channel | `left-vc` | Member leaves voice | `trigger_vc` |
-| Member Joined | `member-joined` | Member joins the guild | none |
-| Member Left | `member-left` | Member leaves the guild | none |
+| Dropdown name     | ID                 | Event                   | Required argument                 |
+|-------------------|--------------------|-------------------------|-----------------------------------|
+| Contains Text     | `contains-text`    | Message sent            | `trigger_text` — substring match  |
+| Contains Word     | `contains-word`    | Message sent            | `trigger_text` — whole-word match |
+| Role Mentioned    | `role-mentioned`   | Message sent            | `trigger_role`                    |
+| Reaction Added    | `reaction-added`   | Reaction added          | `trigger_emoji`                   |
+| Reaction Removed  | `reaction-removed` | Reaction removed        | `trigger_emoji`                   |
+| Joined VC Channel | `join-vc`          | Member joins voice      | `trigger_vc`                      |
+| Left VC Channel   | `left-vc`          | Member leaves voice     | `trigger_vc`                      |
+| Member Joined     | `member-joined`    | Member joins the guild  | none                              |
+| Member Left       | `member-left`      | Member leaves the guild | none                              |
 
 ## Built-in dos
 
@@ -206,7 +206,3 @@ If you enable `auto_update`, run the process under systemd, Docker, or another s
 - There is no periodic / scheduled trigger yet.
 - The hosted invite is a small personal bot, not a high-availability service. Self-host if you need it reliable.
 - `config.json` is required at `configuration/config.json`; there is no environment-variable override.
-
-## License
-
-No license file is published in this repository. Contact [quantumbagel](https://github.com/quantumbagel) if you want to use it beyond personal self-hosting.
