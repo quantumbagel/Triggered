@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "triggered"
+version = "1.0.0"
+description = "A self-hostable Discord if-this-then-that bot"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "quantumbagel" }]
+dependencies = [
+    "discord.py>=2.3.2,<3",
+    "pymongo>=4.6.1,<5",
+    "emoji>=2.9.0,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/quantumbagel/Triggered"
+Repository = "https://github.com/quantumbagel/Triggered"
+
+[tool.setuptools]
+py-modules = ["bot"]
+packages = ["actions", "actions.dos", "actions.triggers", "backend"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

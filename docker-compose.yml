@@ -1,0 +1,28 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - triggered-mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  bot:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      TRIGGERED_BOT_SECRET: ${TRIGGERED_BOT_SECRET:?Set TRIGGERED_BOT_SECRET in .env (see .env.example)}
+      TRIGGERED_OWNER_ID: ${TRIGGERED_OWNER_ID:?Set TRIGGERED_OWNER_ID in .env (see .env.example)}
+      TRIGGERED_MONGODB_URI: mongodb://mongo:27017
+      TRIGGERED_AUTO_UPDATE: "false"
+      TRIGGERED_CHECK_FOR_UPDATES: "false"
+
+volumes:
+  triggered-mongo:
