@@ -6,7 +6,15 @@ from actions.triggers.contains_word import ContainsWordTrigger
 from actions.triggers.everyone_mentioned import EveryoneMentionedTrigger
 from actions.triggers.has_attachment import HasAttachmentTrigger
 from actions.triggers.in_channel import InChannelTrigger
+from actions.triggers.member_boosted import MemberBoostedTrigger
+from actions.triggers.message_deleted import MessageDeletedTrigger
+from actions.triggers.message_edited import MessageEditedTrigger
+from actions.triggers.nickname_changed import NicknameChangedTrigger
+from actions.triggers.role_added import RoleAddedTrigger
+from actions.triggers.role_removed import RoleRemovedTrigger
+from actions.triggers.scheduled import ScheduledTrigger
 from actions.triggers.sent_by import SentByTrigger
+from actions.triggers.starts_with import StartsWithTrigger
 from actions.triggers.user_mentioned import UserMentionedTrigger
 
 
@@ -67,3 +75,60 @@ def test_has_attachment():
 def test_everyone_mentioned():
     assert _run(EveryoneMentionedTrigger.is_valid({}, SimpleNamespace(mention_everyone=True)))
     assert not _run(EveryoneMentionedTrigger.is_valid({}, SimpleNamespace(mention_everyone=False)))
+
+
+def test_starts_with():
+    variables = {"trigger_text": "!cmd"}
+    assert _run(StartsWithTrigger.is_valid(variables, SimpleNamespace(content="!cmd help")))
+    assert not _run(StartsWithTrigger.is_valid(variables, SimpleNamespace(content="hi !cmd")))
+    assert not _run(StartsWithTrigger.is_valid({"trigger_text": ""}, SimpleNamespace(content="!cmd")))
+
+
+def test_message_edited_optional_channel():
+    channel = SimpleNamespace(id=3, name="general")
+    msg = SimpleNamespace(channel=SimpleNamespace(id=3))
+    assert _run(MessageEditedTrigger.is_valid({}, msg))
+    assert _run(MessageEditedTrigger.is_valid({"trigger_channel": channel}, msg))
+    assert not _run(MessageEditedTrigger.is_valid(
+        {"trigger_channel": SimpleNamespace(id=9, name="other")}, msg))
+
+
+def test_message_deleted_optional_channel():
+    channel = SimpleNamespace(id=4, name="alerts")
+    msg = SimpleNamespace(channel=SimpleNamespace(id=4))
+    assert _run(MessageDeletedTrigger.is_valid({}, msg))
+    assert _run(MessageDeletedTrigger.is_valid({"trigger_channel": channel}, msg))
+    assert not _run(MessageDeletedTrigger.is_valid(
+        {"trigger_channel": SimpleNamespace(id=8, name="other")}, msg))
+
+
+def test_role_added_and_removed():
+    role = SimpleNamespace(id=1, name="alerts")
+    other = SimpleNamespace(id=2, name="muted")
+    variables = {"trigger_role": role}
+    assert _run(RoleAddedTrigger.is_valid(
+        variables, [SimpleNamespace(roles=[]), SimpleNamespace(roles=[role])]))
+    assert not _run(RoleAddedTrigger.is_valid(
+        variables, [SimpleNamespace(roles=[role]), SimpleNamespace(roles=[role])]))
+    assert _run(RoleRemovedTrigger.is_valid(
+        variables, [SimpleNamespace(roles=[role, other]), SimpleNamespace(roles=[other])]))
+    assert not _run(RoleRemovedTrigger.is_valid(
+        variables, [SimpleNamespace(roles=[other]), SimpleNamespace(roles=[other])]))
+
+
+def test_nickname_changed():
+    assert _run(NicknameChangedTrigger.is_valid(
+        {}, [SimpleNamespace(nick=None), SimpleNamespace(nick="bob")]))
+    assert not _run(NicknameChangedTrigger.is_valid(
+        {}, [SimpleNamespace(nick="bob"), SimpleNamespace(nick="bob")]))
+
+
+def test_member_boosted():
+    assert _run(MemberBoostedTrigger.is_valid(
+        {}, [SimpleNamespace(premium_since=None), SimpleNamespace(premium_since=1)]))
+    assert not _run(MemberBoostedTrigger.is_valid(
+        {}, [SimpleNamespace(premium_since=1), SimpleNamespace(premium_since=1)]))
+
+
+def test_scheduled_always_valid():
+    assert _run(ScheduledTrigger.is_valid({"trigger_text": "5m"}, None))

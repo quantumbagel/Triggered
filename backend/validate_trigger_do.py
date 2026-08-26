@@ -5,7 +5,8 @@ from actions.triggers.trigger import Trigger
 
 valid_type_names = [
     "send_msg", "vc_join", "vc_leave", "reaction_add", "reaction_remove",
-    "member_join", "member_leave",
+    "member_join", "member_leave", "message_edit", "message_delete",
+    "role_add", "role_remove", "nickname_change", "member_boost", "scheduled",
 ]
 
 

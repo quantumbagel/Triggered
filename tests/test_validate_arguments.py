@@ -61,3 +61,21 @@ def test_do_inheritance():
     ok, reason = is_do_valid(variables, "react", DO_REQUIREMENTS, "member_join")
     assert ok is False
     assert "inherit" in reason.lower()
+
+
+def test_duration_param_on_trigger():
+    requirements = {
+        "scheduled": {
+            "params": {
+                "text": {"required": True, "format": "duration", "min_seconds": 15},
+            }
+        }
+    }
+    ok, _ = is_trigger_valid({"trigger_text": "5m"}, "scheduled", requirements)
+    assert ok is True
+    ok, reason = is_trigger_valid({"trigger_text": "5s"}, "scheduled", requirements)
+    assert ok is False
+    assert "at least" in reason
+    ok, reason = is_trigger_valid({"trigger_text": "weekly"}, "scheduled", requirements)
+    assert ok is False
+    assert "duration" in reason.lower()

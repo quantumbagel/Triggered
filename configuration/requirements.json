@@ -109,6 +109,72 @@
       "params": {},
       "class": "EveryoneMentionedTrigger",
       "type": "send_msg"
+    },
+    "starts-with": {
+      "params": {
+        "text": {
+          "required": true
+        }
+      },
+      "class": "StartsWithTrigger",
+      "type": "send_msg"
+    },
+    "message-edited": {
+      "params": {
+        "channel": {
+          "required": false
+        }
+      },
+      "class": "MessageEditedTrigger",
+      "type": "message_edit"
+    },
+    "message-deleted": {
+      "params": {
+        "channel": {
+          "required": false
+        }
+      },
+      "class": "MessageDeletedTrigger",
+      "type": "message_delete"
+    },
+    "role-added": {
+      "params": {
+        "role": {
+          "required": true
+        }
+      },
+      "class": "RoleAddedTrigger",
+      "type": "role_add"
+    },
+    "role-removed": {
+      "params": {
+        "role": {
+          "required": true
+        }
+      },
+      "class": "RoleRemovedTrigger",
+      "type": "role_remove"
+    },
+    "nickname-changed": {
+      "params": {},
+      "class": "NicknameChangedTrigger",
+      "type": "nickname_change"
+    },
+    "member-boosted": {
+      "params": {},
+      "class": "MemberBoostedTrigger",
+      "type": "member_boost"
+    },
+    "scheduled": {
+      "params": {
+        "text": {
+          "required": true,
+          "format": "duration",
+          "min_seconds": 15
+        }
+      },
+      "class": "ScheduledTrigger",
+      "type": "scheduled"
     }
   },
   "do": {
@@ -146,7 +212,7 @@
         }
       },
       "class": "AddReactionDo",
-      "inheritable": ["send_msg"]
+      "inheritable": ["send_msg", "message_edit"]
     },
     "add-role": {
       "params": {
@@ -163,6 +229,47 @@
         }
       },
       "class": "RemoveRoleDo"
+    },
+    "reply": {
+      "params": {
+        "text": {
+          "required": true
+        }
+      },
+      "class": "ReplyDo",
+      "inheritable": ["send_msg", "message_edit"]
+    },
+    "delete-message": {
+      "params": {},
+      "class": "DeleteMessageDo",
+      "inheritable": ["send_msg", "message_edit"]
+    },
+    "move-to-vc": {
+      "params": {
+        "vc": {
+          "required": true
+        }
+      },
+      "class": "MoveToVCDo"
+    },
+    "kick-member": {
+      "params": {},
+      "class": "KickMemberDo"
+    },
+    "timeout-member": {
+      "params": {
+        "text": {
+          "required": true,
+          "format": "duration",
+          "min_seconds": 1,
+          "max_seconds": 2419200
+        }
+      },
+      "class": "TimeoutMemberDo"
+    },
+    "ban-member": {
+      "params": {},
+      "class": "BanMemberDo"
     }
   }
 }
