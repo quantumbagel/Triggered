@@ -72,6 +72,43 @@
       "params": {},
       "class": "MemberLeaveTrigger",
       "type": "member_leave"
+    },
+    "user-mentioned": {
+      "params": {
+        "member": {
+          "required": true
+        }
+      },
+      "class": "UserMentionedTrigger",
+      "type": "send_msg"
+    },
+    "sent-by": {
+      "params": {
+        "member": {
+          "required": true
+        }
+      },
+      "class": "SentByTrigger",
+      "type": "send_msg"
+    },
+    "in-channel": {
+      "params": {
+        "channel": {
+          "required": true
+        }
+      },
+      "class": "InChannelTrigger",
+      "type": "send_msg"
+    },
+    "has-attachment": {
+      "params": {},
+      "class": "HasAttachmentTrigger",
+      "type": "send_msg"
+    },
+    "everyone-mentioned": {
+      "params": {},
+      "class": "EveryoneMentionedTrigger",
+      "type": "send_msg"
     }
   },
   "do": {
@@ -90,6 +127,42 @@
         }
       },
       "class": "SendMessageDo"
+    },
+    "send-text": {
+      "params": {
+        "channel": {
+          "required": true
+        },
+        "text": {
+          "required": true
+        }
+      },
+      "class": "SendTextDo"
+    },
+    "add-reaction": {
+      "params": {
+        "emoji": {
+          "required": true
+        }
+      },
+      "class": "AddReactionDo",
+      "inheritable": ["send_msg"]
+    },
+    "add-role": {
+      "params": {
+        "role": {
+          "required": true
+        }
+      },
+      "class": "AddRoleDo"
+    },
+    "remove-role": {
+      "params": {
+        "role": {
+          "required": true
+        }
+      },
+      "class": "RemoveRoleDo"
     }
   }
 }

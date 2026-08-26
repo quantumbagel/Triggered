@@ -21,8 +21,6 @@ services:
       TRIGGERED_BOT_SECRET: ${TRIGGERED_BOT_SECRET:?Set TRIGGERED_BOT_SECRET in .env (see .env.example)}
       TRIGGERED_OWNER_ID: ${TRIGGERED_OWNER_ID:?Set TRIGGERED_OWNER_ID in .env (see .env.example)}
       TRIGGERED_MONGODB_URI: mongodb://mongo:27017
-      TRIGGERED_AUTO_UPDATE: "false"
-      TRIGGERED_CHECK_FOR_UPDATES: "false"
 
 volumes:
   triggered-mongo:
