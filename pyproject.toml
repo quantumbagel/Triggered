@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "quantumbagel" }]
 dependencies = [
-    "discord.py>=2.3.2,<3",
+    "discord.py>=2.6,<3",
     "pymongo>=4.6.1,<5",
     "emoji>=2.9.0,<3",
 ]
@@ -26,7 +26,7 @@ Repository = "https://github.com/quantumbagel/Triggered"
 
 [tool.setuptools]
 py-modules = ["bot"]
-packages = ["actions", "actions.dos", "actions.triggers", "backend"]
+packages = ["actions", "actions.dos", "actions.triggers", "backend", "backend.ui"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

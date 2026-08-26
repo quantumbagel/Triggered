@@ -4,6 +4,7 @@ import json
 import logging
 import sys
 import time
+from pathlib import Path
 
 import discord
 import pymongo.errors
@@ -15,6 +16,12 @@ from backend import (discord_pickler, get_trigger_do, git_tools, pagination_view
 from backend.autocomplete import filter_autocomplete
 from backend.duration import parse_duration_seconds
 from backend.permissions import item_is_denied, normalize_mode
+from backend.ui import runtime as ui_runtime
+from backend.ui.about import build_about_view
+from backend.ui.compiler import Compiler
+from backend.ui.emoji import EmojiResolver, load_emoji_config
+from backend.ui.message import edit_view, reply_panel, send_view
+from backend.ui.panels import build_trigger_detail_view, build_welcome_view
 
 logging.getLogger("discord").setLevel(logging.INFO)  # Discord.py logging level - INFO (don't want DEBUG)
 logging.basicConfig(level=logging.DEBUG)
@@ -104,19 +111,15 @@ triggered = app_commands.Group(name="triggered", description="The heart and soul
 CURRENT_REV = git_tools.get_git_revision_short_hash()
 log.info(f"Welcome to Triggered by @quantumbagel! (git revision: {CURRENT_REV})")
 
+_emoji_resolver = EmojiResolver(load_emoji_config(Path("configuration/emoji.json")))
+ui_runtime.configure(Compiler(_emoji_resolver, accent_color=EMBED_COLOR), _emoji_resolver)
 
-def generate_simple_embed(title: str, description: str) -> discord.Embed:
-    """
-    Generate a simple embed
-    :param title: the title
-    :param description: the description
-    :return: the embed
-    """
-    embed = discord.Embed(title=title, description=description, color=EMBED_COLOR)
-    embed.set_footer(text=f"Made with ❤ by @quantumbagel ({CURRENT_REV})",
-                     icon_url="https://avatars.githubusercontent.com/u/58365715")
 
-    return embed
+async def respond(ctx: discord.Interaction, title: str, description: str = "", *,
+                  kind: str = "error", sections: list[tuple[str, str]] | None = None,
+                  ephemeral: bool = True) -> None:
+    """Send a Components V2 notice panel in response to a slash command."""
+    await reply_panel(ctx, title, description or None, kind=kind, sections=sections, ephemeral=ephemeral)
 
 
 def iter_guild_collections(guild_id) -> list[tuple[str, str]]:
@@ -147,20 +150,18 @@ async def is_allowed(ctx: discord.Interaction, f_log: logging.Logger, *,
     :return: true or false
     """
     if not IS_ACTIVE:
-        embed = generate_simple_embed("Bot has been disabled!",
+        await respond(ctx, "Bot has been disabled!",
                                       "Triggered has been temporarily disabled by @quantumbagel. This"
                                       " is likely due to a critical bug being discovered.")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return False
     if ctx.user.bot:
         f_log.warning("Bot users are not allowed to use commands.")
         return False
     if str(ctx.channel.type) == "private":  # No DMs - yet
         f_log.error("Commands don't work in DMs!")
-        embed = generate_simple_embed("Commands don't work in DMs!",
+        await respond(ctx, "Commands don't work in DMs!",
                                       "Triggered requires a server for its commands to work."
                                       " Support for some DM commands may come in the future.")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return False
     if not require_permission_role:
         return True
@@ -170,18 +171,16 @@ async def is_allowed(ctx: discord.Interaction, f_log: logging.Logger, *,
     if decoded_role is None:
         if ctx.guild.self_role.position > ctx.user.top_role.position and not ctx.guild.owner_id == ctx.user.id:
             f_log.error("User attempted to access with insufficient permission (old method) >:(")
-            embed = generate_simple_embed("Insufficient permission!",
+            await respond(ctx, "Insufficient permission!",
                                           "Because a permission role has not been set for this server"
                                           " (or it is invalid),"
                                           " your highest role must be above mine to use my commands!")
-            await ctx.response.send_message(embed=embed, ephemeral=True)
             return False
     elif decoded_role not in ctx.user.roles:
         f_log.error("User attempted to access with insufficient permission (new method) >:(")
-        embed = generate_simple_embed("Insufficient permission!",
+        await respond(ctx, "Insufficient permission!",
                                       "Because a permission role has been set for this server,"
                                       f" you must have the role {decoded_role.mention}.")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return False
     return True
 
@@ -312,15 +311,13 @@ async def new(ctx: discord.Interaction, name: str, trigger: str, description: st
         return
 
     if not name or not name.strip():
-        embed = generate_simple_embed("Trigger name can't be empty!",
+        await respond(ctx, "Trigger name can't be empty!",
                                       "Please provide a name for this trigger.")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
 
     if trigger not in TRIGGER_REQUIREMENTS:
-        embed = generate_simple_embed(f"Unknown trigger \"{trigger}\"!",
+        await respond(ctx, f"Unknown trigger \"{trigger}\"!",
                                       "Pick a trigger type from the autocomplete list. Type to search by name or id.")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
 
     permissions_valid, title, subheading = await check_permissions(
@@ -328,28 +325,24 @@ async def new(ctx: discord.Interaction, name: str, trigger: str, description: st
         ctx.user, ctx.guild, "trigger")
 
     if not permissions_valid:  # If permissions aren't valid, we can just send the prepared error message along.
-        embed = generate_simple_embed(title, subheading)
-        await ctx.response.send_message(embed=embed, ephemeral=True)
+        await respond(ctx, title, subheading)
         return
 
     max_length = configuration['argument_length_limit']
     if len(name) > max_length:
         f_log.error("Trigger length too long!")
-        embed = generate_simple_embed(f"The name of this trigger must be length {max_length} or less.",
+        await respond(ctx, f"The name of this trigger must be length {max_length} or less.",
                                       f"The current length is {len(name)}.")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
     if description is not None:
         if len(description) > max_length:
-            embed = generate_simple_embed(f"The length of your description must be length {max_length} or less.",
+            await respond(ctx, f"The length of your description must be length {max_length} or less.",
                                           f"The current length is {len(description)}.")
-            await ctx.response.send_message(embed=embed, ephemeral=True)
             return
     if trigger_text is not None:
         if len(trigger_text) > max_length:
-            embed = generate_simple_embed(f"The length of your text input must be length {max_length} or less.",
+            await respond(ctx, f"The length of your text input must be length {max_length} or less.",
                                           f"The current length is {len(trigger_text)}.")
-            await ctx.response.send_message(embed=embed, ephemeral=True)
             return
     # Encode variables
     variables = {"trigger_role": trigger_role, "trigger_member": trigger_member,
@@ -361,9 +354,7 @@ async def new(ctx: discord.Interaction, name: str, trigger: str, description: st
     allowed, res = validate_arguments.is_trigger_valid(variables, trigger, TRIGGER_REQUIREMENTS)
     if not allowed:
         f_log.error(f"Failed to validate TRIGGER action (reason=\"{res}\")")
-        embed = generate_simple_embed("Invalid arguments!", f"Reason: \"{res}\"")
-        await ctx.response.send_message(embed=embed,
-                                        ephemeral=True)
+        await respond(ctx, "Invalid arguments!", f"Reason: \"{res}\"")
         return
 
     # Encode variables
@@ -374,10 +365,8 @@ async def new(ctx: discord.Interaction, name: str, trigger: str, description: st
     valid = [col for col, _ in iter_guild_collections(ctx.guild.id)]
     if str(ctx.guild.id) + "." + name in valid:
         f_log.error("Command already exists! Can't recreate unless deleted.")
-        embed = generate_simple_embed(f"That command ({name}) already exists in this server!",
+        await respond(ctx, f"That command ({name}) already exists in this server!",
                                       f"If you own this command, please run /triggered delete Trigger {name}.")
-        await ctx.response.send_message(embed=embed,
-                                        ephemeral=True)
         return
 
     watching_commands_access[str(ctx.guild.id)][name].insert_one(n_var)
@@ -387,8 +376,7 @@ async def new(ctx: discord.Interaction, name: str, trigger: str, description: st
         {"type": "tracker"})
     watching_commands_access[str(ctx.guild.id)][name].insert_one(
         {"type": "last_exec", "value": "This trigger has not been activated yet."})
-    embed = generate_simple_embed(f"Trigger \"{name}\" created!", "Way to go!")
-    await ctx.response.send_message(embed=embed, ephemeral=True)
+    await respond(ctx, f"Trigger \"{name}\" created!", "Way to go!", kind='success')
 
 
 @triggered.command(name="add", description="Add a do to a Trigger."
@@ -423,15 +411,13 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: str, do_name: str
         return
 
     if not trigger_name or not trigger_name.strip() or not do_name or not do_name.strip():
-        embed = generate_simple_embed("Trigger name and do name are required!",
+        await respond(ctx, "Trigger name and do name are required!",
                                       "Please provide both `trigger_name` and `do_name`.")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
 
     if do not in DO_REQUIREMENTS:
-        embed = generate_simple_embed(f"Unknown do \"{do}\"!",
+        await respond(ctx, f"Unknown do \"{do}\"!",
                                       "Pick a do type from the autocomplete list. Type to search by name or id.")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
 
     permissions_valid, title, subheading = await check_permissions(
@@ -439,28 +425,24 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: str, do_name: str
         ctx.user, ctx.guild, "do")
 
     if not permissions_valid:  # If permissions aren't valid, we can just send the prepared error message along.
-        embed = generate_simple_embed(title, subheading)
-        await ctx.response.send_message(embed=embed, ephemeral=True)
+        await respond(ctx, title, subheading)
         return
 
     # Length verification
     max_length = configuration['argument_length_limit']
     if len(do_name) > max_length:
-        embed = generate_simple_embed(f"The name of this do must be length {max_length} or less.",
+        await respond(ctx, f"The name of this do must be length {max_length} or less.",
                                       f"The current length is {len(do_name)}.")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
     if description is not None:
         if len(description) > max_length:
-            embed = generate_simple_embed(f"The length of your description must be length {max_length} or less.",
+            await respond(ctx, f"The length of your description must be length {max_length} or less.",
                                           f"The current length is {len(description)}.")
-            await ctx.response.send_message(embed=embed, ephemeral=True)
             return
     if do_text is not None:
         if len(do_text) > max_length:
-            embed = generate_simple_embed(f"The length of your text input must be length {max_length} or less.",
+            await respond(ctx, f"The length of your text input must be length {max_length} or less.",
                                           f"The current length is {len(do_text)}.")
-            await ctx.response.send_message(embed=embed, ephemeral=True)
             return
 
     # Compile the variables
@@ -480,18 +462,16 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: str, do_name: str
             if (watching_commands_access[str(ctx.guild.id)][trigger_name]
                     .find_one({"do_name": do_name}, {"_id": False, "type": False}) is not None):
                 f_log.error("Do ID already in use by this command!")
-                embed = generate_simple_embed(f"The ID ({do_name}) is already in use!",
+                await respond(ctx, f"The ID ({do_name}) is already in use!",
                                               "Try running this command again, but with a different Do ID"
                                               " (`do_name` parameter)")
-                await ctx.response.send_message(embed=embed, ephemeral=True)
                 return
             trigger_doc = watching_commands_access[str(ctx.guild.id)][trigger_name].find_one(
                 {"type": "trigger"}, {"_id": False, "type": False})
             if trigger_doc is None:
                 f_log.warning("User attempted to access non-existent trigger!")
-                embed = generate_simple_embed(f"That trigger ({trigger_name}) doesn't exist!",
+                await respond(ctx, f"That trigger ({trigger_name}) doesn't exist!",
                                               "Check your spelling.")
-                await ctx.response.send_message(embed=embed, ephemeral=True)
                 return
             trigger_type = TRIGGER_REQUIREMENTS[trigger_doc["trigger_action_name"]]["type"]
             n_var = {}
@@ -501,33 +481,28 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: str, do_name: str
                                                          trigger_type)
             if not allowed:
                 f_log.error(f"Failed to validate DO action (reason=\"{res}\")")
-                embed = generate_simple_embed("Invalid arguments!",
+                await respond(ctx, "Invalid arguments!",
                                               f"Reason: \"{res}\"")
-                await ctx.response.send_message(embed=embed, ephemeral=True)
                 return
             if num_dos + 1 > MAX_DOS:
                 f_log.warning("Command full of dos!")
-                embed = generate_simple_embed(f"That trigger (\"{trigger_name}\")"
+                await respond(ctx, f"That trigger (\"{trigger_name}\")"
                                               f" has used all available {MAX_DOS} dos.",
                                               "Please delete an existing do before adding a new one.")
-                await ctx.response.send_message(embed=embed, ephemeral=True)
                 return
             watching_commands_access[str(ctx.guild.id)][trigger_name].insert_one(n_var)  # Add to DB
         else:
             f_log.warning("Insufficient permissions!")
-            embed = generate_simple_embed("You didn't create this trigger!",
+            await respond(ctx, "You didn't create this trigger!",
                                           "Therefore, you can't edit it.")
-            await ctx.response.send_message(embed=embed, ephemeral=True)
             return
     else:
         f_log.warning("User attempted to access non-existent trigger!")
-        embed = generate_simple_embed(f"That trigger ({trigger_name}) doesn't exist!",
+        await respond(ctx, f"That trigger ({trigger_name}) doesn't exist!",
                                       "Check your spelling.")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
-    embed = generate_simple_embed(f"Do {do_name} added to trigger {trigger_name}!",
-                                  "Make sure to test your trigger to ensure it functions.")
-    await ctx.response.send_message(embed=embed, ephemeral=True)
+    await respond(ctx, f"Do {do_name} added to trigger {trigger_name}!",
+                                  "Make sure to test your trigger to ensure it functions.", kind='success')
 
 
 @triggered.command(description="Delete a selected do or trigger. Some arguments are dependent on others.")
@@ -555,53 +530,40 @@ async def delete(ctx: discord.Interaction, to_delete: app_commands.Choice[str],
     valid = [col for col, _ in iter_guild_collections(ctx.guild.id)]
     if str(ctx.guild.id) + '.' + trigger_name not in valid:  # Trigger doesn't exist
         f_log.error("Invalid command to delete!")
-        embed = generate_simple_embed(f"That command ({trigger_name}) doesn't exist in this server!",
+        await respond(ctx, f"That command ({trigger_name}) doesn't exist in this server!",
                                       "Check your spelling and try again.")
-        await ctx.response.send_message(embed=embed,
-                                        ephemeral=True)
         return
     meta = dict(watching_commands_access[str(ctx.guild.id)][trigger_name].find_one({"type": "meta"}, {"_id": False,
                                                                                                       "type": False}))
     if int(meta["author"][1]) != ctx.user.id and ctx.user.id != ctx.guild.owner.id:  # User isn't author of trigger
         f_log.error("User is not author!")
-        embed = generate_simple_embed("You didn't create this trigger!",
+        await respond(ctx, "You didn't create this trigger!",
                                       "Therefore, you can't delete it.")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
 
     if to_delete.value == "do" and do_name is None:  # Invalid arguments
         f_log.error("User tried to delete do, but didn't provide ID")
-        embed = generate_simple_embed("You have to provide both `trigger_name` and `do_id` to delete a do.",
+        await respond(ctx, "You have to provide both `trigger_name` and `do_id` to delete a do.",
                                       "Check your spelling and try again.")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
     elif to_delete.value == 'do':
         value = watching_commands_access[str(ctx.guild.id)][trigger_name].find_one({"do_name": do_name}, {"_id": False,
                                                                                                           "type": False})
         if value is None:  # Invalid arguments
             f_log.error("The trigger ID is valid, but the do ID is invalid")
-            embed = generate_simple_embed(f"Your provided `do_name` ({do_name}) was invalid!",
+            await respond(ctx, f"Your provided `do_name` ({do_name}) was invalid!",
                                           "However, your `trigger_id` was valid.")
-            await ctx.response.send_message(
-                embed=embed,
-                ephemeral=True)
             return
 
         # Success :D
         watching_commands_access[str(ctx.guild.id)][trigger_name].delete_one({"do_name": do_name})
-        embed = generate_simple_embed(f"Successfully deleted do \"{do_name}\" from trigger \"{trigger_name}.\"",
-                                      "The trigger does still exist though.")
-        await ctx.response.send_message(
-            embed=embed,
-            ephemeral=True)
+        await respond(ctx, f"Successfully deleted do \"{do_name}\" from trigger \"{trigger_name}.\"",
+                                      "The trigger does still exist though.", kind='success')
     elif to_delete.value == "trigger":
         # Success :D
         watching_commands_access[str(ctx.guild.id)][trigger_name].drop()
-        embed = generate_simple_embed(f"Successfully deleted trigger \"{trigger_name}.\"",
-                                      "All of its dos have also been deleted.")
-        await ctx.response.send_message(
-            embed=embed,
-            ephemeral=True)
+        await respond(ctx, f"Successfully deleted trigger \"{trigger_name}.\"",
+                                      "All of its dos have also been deleted.", kind='success')
 
 
 @triggered.command(description="View or search for triggers in this server. Some arguments are dependent on others.")
@@ -625,10 +587,9 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
 
     if mode.value in ["search", "view"] and query is None:  # We need a query for certain modes
         f_log.error(f"Query missing for mode {mode.value}!")
-        embed = generate_simple_embed(f"Please provide a query for the mode {mode.name}!",
+        await respond(ctx, f"Please provide a query for the mode {mode.name}!",
                                       f"This mode requires an argument (how can you {mode.name.lower()}"
                                       f" something without an argument?)")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
     valid = [col for col, _ in iter_guild_collections(ctx.guild.id)]  # Pool of guild's triggers
     data = []  # Data to send to the PaginationView
@@ -692,25 +653,23 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
         else:  # There's no search results (or no triggers)
             if mode.value == "search":
                 f_log.debug(f"No search results found for query \"{query}!\"")
-                embed = generate_simple_embed("No search results found!",
-                                              f"It looks like there are no results for your query "
-                                              f"\"{query}!\"")
+                await respond(ctx, "No search results found!",
+                              f"It looks like there are no results for your query "
+                              f"\"{query}!\"")
             elif mode.value == "view-all":
                 f_log.debug(f"No triggers found in server (name=\"{ctx.guild.name},\" id={ctx.guild.id})!")
-                embed = generate_simple_embed("There are no triggers in this server!",
-                                              "There are no triggers set up yet in this server."
-                                              " Be the first one!")
+                await respond(ctx, "There are no triggers in this server!",
+                              "There are no triggers set up yet in this server."
+                              " Be the first one!")
             else:
                 f_log.debug("MA GET THE CAMERA!")
-                embed = generate_simple_embed(title="Failed to process input correctly.",
-                                              description="Take a screenshot - this should never happen :/")
-            await ctx.response.send_message(embed=embed, ephemeral=True)  # Don't bother making a PaginationView
+                await respond(ctx, "Failed to process input correctly.",
+                              "Take a screenshot - this should never happen :/")
     else:  # We are viewing one command
         if str(ctx.guild.id) + '.' + query not in valid:
             f_log.error(f"Trigger \"{query}\" doesn't exist in server (name=\"{ctx.guild.name},\" id={ctx.guild.id})!")
-            error_embed = generate_simple_embed(f"That trigger (\"{query}\") doesn't exist in this server!",
-                                                "Check your input.")
-            await ctx.response.send_message(embed=error_embed, ephemeral=True)
+            await respond(ctx, f"That trigger (\"{query}\") doesn't exist in this server!",
+                          "Check your input.")
             return
         creator_id = dict(watching_commands_access[str(ctx.guild.id) + '.' + query]
                           .find_one({"type": "meta"}, {"_id": False, "type": False}))["author"][1]
@@ -727,7 +686,6 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
             pluralizer[1] = "s"
         if total_triggered != 1:
             pluralizer[0] = "s"
-        embed = discord.Embed(title=f"Trigger \"{query}\"", color=EMBED_COLOR)
         # Shave an API call
         u = ctx.guild.get_member(creator_id)
         if u is None:
@@ -741,7 +699,6 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
         else:
             mention = u.mention
         actions = ''
-        # Get the name of the dropdown (for embed)
         dropdown = TRIGGER_REQUIREMENTS[trigger_access['trigger_action_name']]['class']().dropdown_name()
         for action in list(watching_commands_access[str(ctx.guild.id) + '.' + query]
                                    .find({"type": "do"}, {"_id": False, "type": False})):
@@ -755,17 +712,17 @@ async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: 
         if actions == '':  # Add a message if no dos are present
             actions = "There are no dos in this trigger!"
 
-        # Create embed with data
-        embed.add_field(name="Created by:", value=mention)
-        embed.add_field(name="Trigger type:", value=dropdown)
-        embed.add_field(name="Dos:", value=actions, inline=False)
-        embed.add_field(name="This trigger was activated:",
-                        value=f"{total_triggered} time{pluralizer[0]} across {num_triggered} user{pluralizer[1]}.")
-        embed.add_field(name="Description:", value=trigger_access['trigger_description'])
-        embed.add_field(name="Last execution details:", value=last_exec, inline=False)
-        embed.set_footer(text="Made with ❤ by @quantumbagel",
-                         icon_url="https://avatars.githubusercontent.com/u/58365715")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
+        view = build_trigger_detail_view(
+            emoji=ui_runtime.emoji,
+            name=query,
+            created_by=mention,
+            trigger_type=dropdown,
+            dos=actions,
+            activation=f"{total_triggered} time{pluralizer[0]} across {num_triggered} user{pluralizer[1]}.",
+            description=trigger_access['trigger_description'],
+            last_exec=last_exec,
+        )
+        await send_view(ctx, view, ephemeral=True)
 
 
 async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
@@ -791,10 +748,9 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
     :return: None
     """
     if not IS_ACTIVE:  # If the bot isn't online, just quit
-        embed = generate_simple_embed("Bot has been disabled!",
+        await respond(ctx, "Bot has been disabled!",
                                       "Triggered has been temporarily disabled by @quantumbagel."
                                       " This is likely due to a critical bug being discovered.")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
         return
 
     # Get the logger
@@ -805,11 +761,10 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
         return
 
     if require_admin and not ctx.user.guild_permissions.administrator:
-        await ctx.response.send_message(embed=generate_simple_embed("Insufficient permissions!",
-                                                                    "You must have the permission"
-                                                                    " \"Administrator\" in this server"
-                                                                    " to use this command."),
-                                        ephemeral=True)
+        await respond(ctx, "Insufficient permissions!",
+                      "You must have the permission"
+                      " \"Administrator\" in this server"
+                      " to use this command.")
         return
 
     if collection_id is None:
@@ -826,10 +781,9 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
     human_readable_value = human_readable[conf_option_value]  # What's the human_readable name?
     active_variable = variables[conf_option_value]  # What is the value of the *relevant* variable?
     if active_variable is None and command_mode not in ["switch", "get"]:
-        await ctx.response.send_message(embed=generate_simple_embed("Required variable not provided!",
-                                                                    f"You have to provide a variable to use"
-                                                                    f" the mode \"{command_mode}!\""),
-                                        ephemeral=True)
+        await respond(ctx, "Required variable not provided!",
+                      f"You have to provide a variable to use"
+                      f" the mode \"{command_mode}!\"")
         return
 
     if command_mode == "update" and is_blacklist:  # Case with update, and blacklist mode
@@ -845,10 +799,9 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
             exists = False  # mark nonexistence
         new_addition = await discord_pickler.encode_object(active_variable)  # Encode the active variable
         if new_addition in current_value:  # If it's already in the DB, throw an error at the user.
-            embed = generate_simple_embed(f"That {human_readable_value}"
+            await respond(ctx, f"That {human_readable_value}"
                                           f" is already a member "
                                           f"of the {mode}!", "Therefore, you don't need to add it!")
-            await ctx.response.send_message(embed=embed, ephemeral=True)
             return
         current_value.append(new_addition)  # Add to DB list
         if exists:  # If it exists, use .replace_one
@@ -872,9 +825,9 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
 
     elif command_mode == "switch" and not is_blacklist:
         # You can't switch a non-blacklist mode!
-        embed = generate_simple_embed("You can't switch white/blacklist on a non white/blacklist!",
-                                      "Use a list (like Role White/Blacklist)")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
+        await respond(ctx, "You can't switch white/blacklist on a non white/blacklist!",
+                      "Use a list (like Role White/Blacklist)")
+        return
 
     elif command_mode == "switch" and is_blacklist:
         # You can switch a white/blacklist
@@ -891,16 +844,13 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
 
     elif command_mode == "get" and is_blacklist:
         # Get a blacklist
-        embed = generate_simple_embed(title=f"Viewing permission \"{conf_option_name}\"", description="")
         all_permissions = ""
-        v_permissions = []
         if current_value_dict is not None:
             mode = normalize_mode(current_value_dict.get("mode")) or default_mode
             for item in current_value_dict["value"]:
                 try:
                     decoded = await discord_pickler.decode_object(item, ctx.guild)
                     if decoded is not None:  # check dead channels
-                        v_permissions.append(item)
                         all_permissions += ":arrow_right:   " + decoded.mention + "\n"
                 except discord.NotFound:
                     continue
@@ -910,62 +860,52 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
             all_permissions = all_permissions[:-1]
         else:
             all_permissions = "None"
-        embed.add_field(name="Items in permission:", value=all_permissions)
-        embed.add_field(name="Mode:", value=mode.capitalize())
-        await ctx.response.send_message(embed=embed, ephemeral=True)
-        return  # Don't call response.send_message twice
+        await respond(ctx, f"Viewing permission \"{conf_option_name}\"",
+                      kind="info",
+                      sections=[("Items in permission", all_permissions), ("Mode", mode.capitalize())])
+        return
 
     elif command_mode == "get" and not is_blacklist:
         # Get a single value
         if current_value_dict is not None:
             current_value_dict = dict(current_value_dict)
             decoded = await discord_pickler.decode_object(current_value_dict["value"], ctx.guild)
-            if decoded is None:
-                v = "None"
-            else:
-                v = decoded.mention
-            embed = generate_simple_embed(f"Viewing permission \"{conf_option_name}\"", "")
-            embed.add_field(name="Value:", value=v)
+            v = "None" if decoded is None else decoded.mention
         else:
-            embed = generate_simple_embed(f"Viewing permission \"{conf_option_name}\"", "")
-            embed.add_field(name="Value:", value="None")
-        await ctx.response.send_message(embed=embed, ephemeral=True)
+            v = "None"
+        await respond(ctx, f"Viewing permission \"{conf_option_name}\"",
+                      kind="info", sections=[("Value", v)])
         return
 
     elif command_mode == "remove" and not is_blacklist:
         # Remove a single value
         if current_value_dict is None:
-            embed = generate_simple_embed(f"This setting is already not set!",
+            await respond(ctx, f"This setting is already not set!",
                                           "Therefore, you can't remove it :(")
-            await ctx.response.send_message(embed=embed, ephemeral=True)
             return
         else:
             config_collection.delete_one({"type": conf_option_value})
-            embed = generate_simple_embed(f"Successfully deleted setting!",
-                                          "Thanks for the storage space! :D")
-            await ctx.response.send_message(embed=embed, ephemeral=True)
+            await respond(ctx, f"Successfully deleted setting!",
+                                          "Thanks for the storage space! :D", kind='success')
             return
 
     elif command_mode == "remove" and is_blacklist:
         if active_variable is None:  # Delete the *entire* list
             if current_value_dict is None:
-                embed = generate_simple_embed(f"There is no white/blacklist present here!",
+                await respond(ctx, f"There is no white/blacklist present here!",
                                               "Therefore, you can't remove it :(")
-                await ctx.response.send_message(embed=embed, ephemeral=True)
                 return
             else:
                 config_collection.delete_one({"type": conf_option_value})
-                embed = generate_simple_embed(f"Successfully deleted {current_value_dict['mode']}"
+                await respond(ctx, f"Successfully deleted {current_value_dict['mode']}"
                                               f" \"{conf_option_name}!\"",
-                                              "Thanks for the storage space! :D")
-                await ctx.response.send_message(embed=embed, ephemeral=True)
+                                              "Thanks for the storage space! :D", kind='success')
                 return
         else:
             # Remove a single value from a white/blacklist
             if current_value_dict is None:  # If setting isn't set, you can't use it anyway
-                embed = generate_simple_embed(f"This setting is already not set!",
+                await respond(ctx, f"This setting is already not set!",
                                               "Therefore, you can't remove it :(")
-                await ctx.response.send_message(embed=embed, ephemeral=True)
                 return
             else:
                 current_value_dict = dict(current_value_dict)
@@ -979,25 +919,23 @@ async def configurator(ctx: discord.Interaction, configuration_dictionary: dict,
                                   {"type": conf_option_value,
                                    "mode": normalize_mode(current_value_dict.get("mode")) or default_mode,
                                    "value": new_value}))
-                    embed = generate_simple_embed(f"Successfully deleted item"
+                    await respond(ctx, f"Successfully deleted item"
                                                   f" {active_variable.mention}"
                                                   f" from {current_value_dict['mode']}!",
-                                                  "Thanks for the storage space! :D")
-                    await ctx.response.send_message(embed=embed, ephemeral=True)
+                                                  "Thanks for the storage space! :D", kind='success')
                     return
                 else:  # We don't have that in the white/blacklist, so we don't need to do
-                    embed = generate_simple_embed(f"That {human_readable_value}"
+                    await respond(ctx, f"That {human_readable_value}"
                                                   f" wasn't in the {current_value_dict['mode']} anyway!",
                                                   "Therefore, it wasn't deleted.")
-                    await ctx.response.send_message(embed=embed, ephemeral=True)
                     return
 
     # If we are here, we can say "Updated permissions"
-    await ctx.response.send_message(embed=generate_simple_embed("Successfully updated permissions!",
-                                                                "Make sure to double-check that the new"
-                                                                " configuration is what you want it to be by "
-                                                                f"using */triggered {command_label} Get*."),
-                                    ephemeral=True)
+    await respond(ctx, "Successfully updated permissions!",
+                  "Make sure to double-check that the new"
+                  " configuration is what you want it to be by "
+                  f"using */triggered {command_label} Get*.",
+                  kind="success")
 
 
 @triggered.command(name="server-configure",
@@ -1065,6 +1003,29 @@ async def user_configure(ctx: discord.Interaction, command_mode: app_commands.Ch
                        command_mode.value, configuration_option.value, configuration_option.name,
                        default_blacklist_mode="whitelist", collection_id=str(ctx.user.id),
                        require_admin=False, command_label="user-configure")
+
+
+@triggered.command(name="about", description="Information about Triggered")
+async def about(ctx: discord.Interaction) -> None:
+    """Show the about panel. Works in DMs and does not require the permission role."""
+    f_log = log.getChild("about")
+    if not IS_ACTIVE:
+        await respond(ctx, "Bot has been disabled!",
+                      "Triggered has been temporarily disabled by @quantumbagel. This"
+                      " is likely due to a critical bug being discovered.")
+        return
+    if ctx.user.bot:
+        f_log.warning("Bot users are not allowed to use commands.")
+        return
+
+    async def on_action(interaction: discord.Interaction, source: str, payload: dict | None,
+                        values: list[str] | None) -> None:
+        tab = (payload or {}).get("tab", "main")
+        next_view = build_about_view(ui_runtime.emoji, active_tab=tab)
+        await edit_view(interaction, next_view, on_action=on_action)
+
+    view = build_about_view(ui_runtime.emoji, active_tab="main")
+    await send_view(ctx, view, ephemeral=True, on_action=on_action)
 
 
 async def handle(id_type: str, creator: discord.Member = None, guild: discord.Guild = None, other=None,
@@ -1252,6 +1213,11 @@ async def run_scheduled_triggers() -> None:
 async def on_ready() -> None:
     global _scheduler_started
     log.info(f"Logged in as {client.user} (id={client.user.id})")
+    try:
+        await ui_runtime.emoji.sync(client)
+        log.info("Synced application emoji IDs")
+    except Exception:
+        log.exception("Failed to sync application emojis; unicode fallbacks will be used")
     if not _scheduler_started:
         _scheduler_started = True
         asyncio.create_task(run_scheduled_triggers(), name="triggered-scheduler")
@@ -1305,6 +1271,13 @@ async def on_message(msg: discord.Message) -> None:
         else:
             f_log.critical("BOT HAS BEEN DISABLED (TOGGLE)!")
             await msg.add_reaction("⛔")
+        return
+    elif msg.content == "triggered/emoji-upload" and msg.author.id == configuration["owner_id"]:
+        uploaded = await ui_runtime.emoji.upload_missing(client, Path("assets/emoji"))
+        await ui_runtime.emoji.sync(client)
+        f_log.info(f"Uploaded {uploaded} missing application emoji(s).")
+        await msg.add_reaction("✅")
+        await msg.reply(f"Uploaded {uploaded} missing application emoji(s).")
         return
     if msg.guild is None:
         return
@@ -1490,36 +1463,13 @@ async def on_guild_join(guild: discord.Guild) -> None:
     """
     f_log = log.getChild("event.guild_join")
     f_log.info("Added to guild \"" + guild.name + f"\"! (id={guild.id})")
-    embed = discord.Embed(title="Hi! I'm Triggered!",
-                          description="Thanks for adding me to your server :D\nHere's some tips on how to get started.\n"
-                                      "Please note that this introduction (or the bot) don't contain details on how to"
-                                      " use the bot. For that, please check the README (linked below).",
-                          color=EMBED_COLOR)
-    embed.add_field(name="What is this bot?",
-                    value="Triggered is an if-this-then-that bot for Discord. Create a trigger for a message,"
-                          " reaction, voice, role, or timed event, then attach one or more actions.")
-    embed.add_field(name="I'm a developer - How do I make my custom triggers?",
-                    value="If you think you have an idea,"
-                          " please go to the [GitHub](https://github.com/quantumbagel/Triggered)"
-                          " and submit a pull request with your code."
-                          " You might see your trigger/do in the main bot!")
-    embed.add_field(name="Bro, I'm not a developer - I just want to use this bot!",
-                    value="Please read the [README](https://github.com/quantumbagel/Triggered/blob/main/README.md)"
-                          " for command usage :D")
-    embed.add_field(name="I can't use /triggered!",
-                    value='Triggered has a settable permission role. If this role is set,'
-                          ' Triggered will only let you use its commands if you have that role. Otherwise,'
-                          ' you must be ranked higher in the role hierarchy than Triggered.')
-    embed.add_field(name="Who made you?",
-                    value="[@quantumbagel on Github](https://github.com/quantumbagel)")
-
-    embed.set_footer(text=f"Made with ❤ by @quantumbagel ({CURRENT_REV})",
-                     icon_url="https://avatars.githubusercontent.com/u/58365715")
-    # Make sure to send in the system channel - if there is none, nothing *should* be sent
-    try:
-        await guild.system_channel.send(embed=embed)
-    except AttributeError:
+    if guild.system_channel is None:
         f_log.info("No system channel is set - not sending anything.")
+        return
+    try:
+        await send_view(guild.system_channel, build_welcome_view(ui_runtime.emoji))
+    except discord.HTTPException:
+        f_log.info("Could not send welcome message in the system channel.")
 
 
 @client.event

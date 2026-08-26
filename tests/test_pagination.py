@@ -1,4 +1,4 @@
-from backend.pagination_view import page_slice
+from backend.pagination_view import PaginationView, page_slice
 
 
 def test_page_slice_is_1_indexed_and_does_not_reset():
@@ -12,3 +12,14 @@ def test_page_slice_out_of_range_is_empty():
     assert page_slice(["a"], 2, 3) == []
     assert page_slice(["a"], 0, 3) == []
     assert page_slice(["a"], 1, 0) == []
+
+
+def test_pagination_view_slices_current_page():
+    data = [
+        {"title": f"{i}. t", "subtitle": "by x", "trigger_type": "Contains Text", "dos_subtitle": "0/3"}
+        for i in range(1, 8)
+    ]
+    pager = PaginationView(title="Server Triggers", data=data, sep=3)
+    assert [item["title"] for item in pager.get_current_page_data()] == ["1. t", "2. t", "3. t"]
+    pager.current_page = 3
+    assert [item["title"] for item in pager.get_current_page_data()] == ["7. t"]

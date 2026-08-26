@@ -1,0 +1,18 @@
+{
+  "success": {"fallback": "✅"},
+  "error": {"fallback": "❌"},
+  "github": {"fallback": "📁"},
+  "learn": {"fallback": "📖"},
+  "creator": {"fallback": "✨"},
+  "previous": {"fallback": "◀"},
+  "next": {"fallback": "▶"},
+  "first": {"fallback": "⏮"},
+  "last": {"fallback": "⏭"},
+  "forward": {"fallback": "›"},
+  "bullet": {"fallback": "•"},
+  "configure": {"fallback": "⚙"},
+  "user": {"fallback": "👤"},
+  "settings": {"fallback": "⚙"},
+  "logo": {"fallback": "⚡"},
+  "pointing": {"fallback": "👉"}
+}
