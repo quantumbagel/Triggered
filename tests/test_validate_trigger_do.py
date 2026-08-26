@@ -35,4 +35,4 @@ def test_bundled_requirements_load_classes():
     assert triggers["user-mentioned"]["class"] is UserMentionedTrigger
     assert dos["send-message"]["class"] is SendMessageDo
     assert dos["add-reaction"]["class"] is AddReactionDo
-    assert dos["add-reaction"]["inheritable"] == ["send_msg"]
+    assert dos["add-reaction"]["inheritable"] == ["send_msg", "message_edit"]

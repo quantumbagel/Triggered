@@ -2,7 +2,23 @@ import re
 
 from emoji import EMOJI_DATA as EMOJIS
 
+from backend.duration import validate_duration
+
 CUSTOM_EMOJI_RE = re.compile(r"^<a?:\w+:\d+>$")
+
+
+def _check_params(variables: dict, params: dict, prefix: str) -> tuple[bool, str]:
+    for param, spec in params.items():
+        value = variables.get(f"{prefix}_{param}")
+        if spec.get("required") and value is None:
+            return False, f"{prefix}_{param} is required and not provided!"
+        if param == "emoji" and value is not None and not validate_emoji(value):
+            return False, "Invalid emoji!"
+        if spec.get("format") == "duration" and value is not None:
+            ok, reason = validate_duration(value, spec)
+            if not ok:
+                return False, reason
+    return True, ""
 
 
 def is_trigger_valid(variables: dict, trigger: str, requirements: dict):
@@ -15,14 +31,7 @@ def is_trigger_valid(variables: dict, trigger: str, requirements: dict):
     """
     if 'params' not in requirements[trigger].keys():
         return True, ""  # No stated requirements
-    for param in requirements[trigger]['params'].keys():
-        if requirements[trigger]['params'][param]['required'] and variables['trigger_' + param] is None:
-            return False, f"trigger_{param} is required and not provided!"
-        if param == 'emoji' and variables.get('trigger_emoji') is not None:
-            if not validate_emoji(variables['trigger_emoji']):
-                return False, "Invalid emoji!"
-
-    return True, ""
+    return _check_params(variables, requirements[trigger]["params"], "trigger")
 
 
 def is_do_valid(variables: dict, do: str, requirements: dict, trigger_type: str):
@@ -35,12 +44,9 @@ def is_do_valid(variables: dict, do: str, requirements: dict, trigger_type: str)
     :return: a bool and the reason
     """
     if 'params' in requirements[do].keys():
-        for param in requirements[do]['params'].keys():
-            if requirements[do]['params'][param]['required'] and variables['do_' + param] is None:
-                return False, f"do_{param} is required and not provided!"
-            if param == 'emoji' and variables.get('do_emoji') is not None:
-                if not validate_emoji(variables['do_emoji']):
-                    return False, "Invalid emoji!"
+        ok, reason = _check_params(variables, requirements[do]["params"], "do")
+        if not ok:
+            return False, reason
     if 'inheritable' in requirements[do].keys() and trigger_type not in requirements[do]['inheritable']:
         return False, (f"Do cannot inherit from \"{trigger_type}.\"\n"
                        f"It can only inherit from these types: {','.join(requirements[do]['inheritable'])}")

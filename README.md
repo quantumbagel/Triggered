@@ -9,8 +9,8 @@ Triggered is a self-hostable Discord **if-this-then-that** bot. You create a **t
 ## Features
 
 - Slash-command workflow for creating, attaching, viewing, and deleting automations
-- Built-in triggers for messages, reactions, voice channels, and member join/leave
-- Built-in dos for channel messages, DMs, custom text, reactions, and role changes
+- Built-in triggers for messages, edits, deletes, reactions, voice, roles, nicknames, boosts, and a timed clock
+- Built-in dos for messages, DMs, replies, reactions, roles, voice moves, and moderation
 - Server-wide permission role plus channel/role white/blacklists
 - Per-user white/blacklists so people can opt in or out of being targeted
 - MongoDB storage, per-guild data isolation, and cleanup when the bot is kicked
@@ -37,7 +37,7 @@ pip install -e .
 
 1. Create a Discord application at [https://discord.com/developers/applications](https://discord.com/developers/applications).
 2. Create a bot user, copy the token, and enable the privileged intents listed above.
-3. Invite the bot with `applications.commands` and permission to view channels, send messages, embed links, add reactions, and manage roles (the last two are only required for those dos).
+3. Invite the bot with `applications.commands` and permission to view channels, send messages, embed links, add reactions, manage roles, move members, kick, ban, and moderate members (the extra permissions are only required for those dos).
 4. Start MongoDB. The default URI is `mongodb://localhost:27017`.
 5. Copy `configuration/config.example.json` to `configuration/config.json` and fill in your bot token, owner ID, and MongoDB URI.
 6. Run the bot:
@@ -86,8 +86,8 @@ Slash commands only work in guilds, not DMs.
 
 | Command | What it does |
 | --- | --- |
-| `/triggered new` | Create a trigger. Required: `name`, `trigger`. Optional: `description` plus the argument that trigger needs (`trigger_text`, `trigger_role`, `trigger_member`, `trigger_emoji`, `trigger_vc`, `trigger_channel`, …). |
-| `/triggered add` | Attach a do to an existing trigger. Required: `trigger_name`, `do`, `do_name`. Optional: `description` plus the argument that do needs (`do_channel`, `do_member`, `do_role`, `do_emoji`, `do_text`, …). |
+| `/triggered new` | Create a trigger. Required: `name`, `trigger`. Optional: `description` plus the argument that trigger needs (`trigger_text`, `trigger_role`, `trigger_member`, `trigger_emoji`, `trigger_vc`, `trigger_channel`, …). Durations use seconds or shorthand (`60s`, `5m`, `1h`, `1d`). |
+| `/triggered add` | Attach a do to an existing trigger. Required: `trigger_name`, `do`, `do_name`. Optional: `description` plus the argument that do needs (`do_channel`, `do_member`, `do_role`, `do_emoji`, `do_text`, `do_vc`, …). |
 | `/triggered delete` | Delete a trigger (and its dos) or a single do. |
 | `/triggered view` | `List all`, `View` one trigger by name, or `Search` by name / author / type. |
 | `/triggered server-configure` | Guild permission settings. Requires Discord Administrator. |
@@ -122,12 +122,20 @@ Pass the matching `/triggered new` argument for each type.
 | In Channel        | `in-channel`         | Message sent            | `trigger_channel`                 |
 | Has Attachment    | `has-attachment`     | Message sent            | none                              |
 | Everyone Mentioned| `everyone-mentioned` | Message sent            | none — `@everyone` or `@here`     |
+| Starts With       | `starts-with`        | Message sent            | `trigger_text` — prefix match     |
+| Message Edited    | `message-edited`     | Message edited          | optional `trigger_channel`        |
+| Message Deleted   | `message-deleted`    | Message deleted         | optional `trigger_channel`        |
 | Reaction Added    | `reaction-added`     | Reaction added          | `trigger_emoji`                   |
 | Reaction Removed  | `reaction-removed`   | Reaction removed        | `trigger_emoji`                   |
 | Joined VC Channel | `join-vc`            | Member joins voice      | `trigger_vc`                      |
 | Left VC Channel   | `left-vc`            | Member leaves voice     | `trigger_vc`                      |
+| Role Added        | `role-added`         | Member gained a role    | `trigger_role`                    |
+| Role Removed      | `role-removed`       | Member lost a role      | `trigger_role`                    |
+| Nickname Changed  | `nickname-changed`   | Guild nickname changed  | none                              |
+| Member Boosted    | `member-boosted`     | Member boosted the guild| none                              |
 | Member Joined     | `member-joined`      | Member joins the guild  | none                              |
 | Member Left       | `member-left`        | Member leaves the guild | none                              |
+| Scheduled         | `scheduled`          | Interval clock          | `trigger_text` — duration (`5m`)  |
 
 ## Built-in dos
 
@@ -136,13 +144,21 @@ Pass the matching `/triggered new` argument for each type.
 | Send Message | `send-message` | `do_channel` | Posts an embed in that channel describing what fired. |
 | Send DM | `send-dm` | `do_member` | DMs that member the same kind of embed. |
 | Send Text | `send-text` | `do_channel`, `do_text` | Posts your custom text in that channel. |
-| Add Reaction | `add-reaction` | `do_emoji` | Reacts to the triggering message. Only attachable to message triggers. |
+| Reply | `reply` | `do_text` | Replies to the triggering message. Message send/edit triggers only. |
+| Add Reaction | `add-reaction` | `do_emoji` | Reacts to the triggering message. Message send/edit triggers only. |
+| Delete Message | `delete-message` | none | Deletes the triggering message. Message send/edit triggers only. |
 | Add Role | `add-role` | `do_role` | Gives that role to the member who fired the trigger. |
 | Remove Role | `remove-role` | `do_role` | Removes that role from the member who fired the trigger. |
+| Move to VC | `move-to-vc` | `do_vc` | Moves the member who fired the trigger into that voice channel. They must already be in voice. |
+| Kick Member | `kick-member` | none | Kicks the member who fired the trigger. |
+| Timeout Member | `timeout-member` | `do_text` | Times out the member who fired the trigger. Duration like `10m` (max 28d). |
+| Ban Member | `ban-member` | none | Bans the member who fired the trigger. |
 
 Bots never fire triggers. If a do targets a member, that member's user-configure lists are checked first.
 
-`add-role` and `remove-role` need **Manage Roles**, and the bot's role must sit above the role being granted or removed. `add-reaction` needs **Add Reactions**.
+`add-role` and `remove-role` need **Manage Roles**, and the bot's role must sit above the role being granted or removed. `add-reaction` needs **Add Reactions**. `move-to-vc` needs **Move Members**. `kick-member`, `timeout-member`, and `ban-member` need **Kick Members**, **Moderate Members**, and **Ban Members** respectively. Those three skip the guild owner and the bot itself.
+
+Scheduled triggers wait one interval after creation before the first fire. Message-deleted only runs if Discord still had the message cached.
 
 ---
 
@@ -180,7 +196,7 @@ The bot loads everything listed in `configuration/requirements.json`.
 3. Put the file in `actions/triggers/` or `actions/dos/`, named after the ID (`contains-text` → `contains_text.py`).
 4. Register it in `configuration/requirements.json` with an ID, `class` name, `type` (triggers only), and `params`.
 
-Trigger `type` must be one of: `send_msg`, `vc_join`, `vc_leave`, `reaction_add`, `reaction_remove`, `member_join`, `member_leave`.
+Trigger `type` must be one of: `send_msg`, `vc_join`, `vc_leave`, `reaction_add`, `reaction_remove`, `member_join`, `member_leave`, `message_edit`, `message_delete`, `role_add`, `role_remove`, `nickname_change`, `member_boost`, `scheduled`.
 
 Open a pull request against `dev` if you want it in the public bot.
 
@@ -229,6 +245,6 @@ To use a local `configuration/config.json` instead, bind-mount it onto `/app/con
 ## Known limits
 
 - Slash commands do not work in DMs.
-- There is no periodic / scheduled trigger yet.
+- Scheduled triggers cannot run more often than every 15 seconds.
 - The hosted invite is a small personal bot, not a high-availability service. Self-host if you need it reliable.
 - `config.json` is required at `configuration/config.json` (copy it from `configuration/config.example.json`). Keep that file private — it is gitignored. Docker can skip a local config file and use `TRIGGERED_*` environment variables instead.

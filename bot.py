@@ -1,4 +1,5 @@
 # Triggered by @quantumbagel.
+import asyncio
 import json
 import logging
 import sys
@@ -11,6 +12,7 @@ from pymongo import MongoClient
 
 from backend import (discord_pickler, get_trigger_do, git_tools, pagination_view, triggered_formatter,
                      validate_arguments, validate_configuration)
+from backend.duration import parse_duration_seconds
 from backend.permissions import item_is_denied, normalize_mode
 
 logging.getLogger("discord").setLevel(logging.INFO)  # Discord.py logging level - INFO (don't want DEBUG)
@@ -43,6 +45,8 @@ BOT_SECRET = configuration["bot_secret"]
 MAX_DOS = configuration["max_dos_per_trigger"]
 # Whether the bot should respond to commands
 IS_ACTIVE = True
+_scheduler_started = False
+SCHEDULER_TICK_SECONDS = 15
 
 # Variables for the user-configure and server-configure commands
 
@@ -1016,7 +1020,7 @@ async def user_configure(ctx: discord.Interaction, command_mode: app_commands.Ch
 
 
 async def handle(id_type: str, creator: discord.Member = None, guild: discord.Guild = None, other=None,
-                 event_channel=None) -> None:
+                 event_channel=None, only_database_id=None) -> None:
     """
     Handle a generic trigger firing.
     :param id_type: The type of the trigger
@@ -1024,6 +1028,7 @@ async def handle(id_type: str, creator: discord.Member = None, guild: discord.Gu
     :param guild: The guild the command is in
     :param other: Other relevant data (passed through to Do.execute())
     :param event_channel: The channel the event happened in, if any
+    :param only_database_id: If set, only this collection is considered
     :return: None
     """
     f_log = log.getChild(f"event_handler.{id_type}")
@@ -1032,6 +1037,8 @@ async def handle(id_type: str, creator: discord.Member = None, guild: discord.Gu
         return
     what_happened = {}
     for database_id, trigger in iter_guild_collections(guild.id):
+        if only_database_id is not None and database_id != only_database_id:
+            continue
         start_scan = time.time()
         trigger_doc = watching_commands_access[database_id].find_one({"type": "trigger"}, {'_id': False, "type": False})
         if trigger_doc is None:
@@ -1143,9 +1150,63 @@ async def handle(id_type: str, creator: discord.Member = None, guild: discord.Gu
                 watching_commands_access[wh].insert_one({"value": what_happened[wh], "type": "last_exec"})
 
 
+async def tick_scheduled_triggers() -> None:
+    """Fire any due scheduled triggers once."""
+    f_log = log.getChild("scheduler")
+    now = time.time()
+    for guild in client.guilds:
+        for database_id, _trigger_name in iter_guild_collections(guild.id):
+            trigger_doc = watching_commands_access[database_id].find_one(
+                {"type": "trigger"}, {'_id': False, "type": False})
+            if trigger_doc is None:
+                continue
+            submit_trigger = {}
+            for item, value in dict(trigger_doc).items():
+                submit_trigger[item] = await discord_pickler.decode_object(value, guild)
+            if TRIGGER_REQUIREMENTS.get(submit_trigger.get("trigger_action_name"), {}).get("type") != "scheduled":
+                continue
+            interval = parse_duration_seconds(submit_trigger.get("trigger_text"))
+            if not interval:
+                continue
+            state = watching_commands_access[database_id].find_one({"type": "last_fire"})
+            if state is None:
+                watching_commands_access[database_id].insert_one({"type": "last_fire", "value": now})
+                continue
+            last_fire = state.get("value") or 0
+            if now - last_fire < interval:
+                continue
+            meta = watching_commands_access[database_id].find_one(
+                {"type": "meta"}, {'_id': False, "type": False}) or {}
+            author = await discord_pickler.decode_object(dict(meta).get("author"), guild)
+            if author is None:
+                f_log.debug(f"Skipping scheduled trigger {database_id}: author is gone.")
+                continue
+            watching_commands_access[database_id].replace_one(
+                {"type": "last_fire"}, {"type": "last_fire", "value": now}, upsert=True)
+            f_log.debug(f"Firing scheduled trigger {database_id} in guild {guild.id}")
+            await handle("scheduled", author, guild, only_database_id=database_id)
+
+
+async def run_scheduled_triggers() -> None:
+    """Background loop that ticks scheduled triggers."""
+    await client.wait_until_ready()
+    f_log = log.getChild("scheduler")
+    f_log.info("Scheduled trigger loop started.")
+    while not client.is_closed():
+        try:
+            await tick_scheduled_triggers()
+        except Exception:
+            f_log.exception("Scheduled trigger tick failed.")
+        await asyncio.sleep(SCHEDULER_TICK_SECONDS)
+
+
 @client.event
 async def on_ready() -> None:
+    global _scheduler_started
     log.info(f"Logged in as {client.user} (id={client.user.id})")
+    if not _scheduler_started:
+        _scheduler_started = True
+        asyncio.create_task(run_scheduled_triggers(), name="triggered-scheduler")
 
 
 @client.event
@@ -1202,6 +1263,60 @@ async def on_message(msg: discord.Message) -> None:
     f_log.debug(f'Event "on_message" has been triggered! (server="{msg.guild.name}", server_id={msg.guild.id},'
                 f' member={msg.author.global_name}, member_id={msg.author.id})')
     await handle("send_msg", msg.author, msg.guild, msg, event_channel=msg.channel)
+
+
+@client.event
+async def on_message_edit(before: discord.Message, after: discord.Message) -> None:
+    """Handle message_edit triggers. Ignore embed-only or pin updates with unchanged content."""
+    if after.guild is None:
+        return
+    if before.content == after.content:
+        return
+    f_log = log.getChild("event.message_edit")
+    f_log.debug(f'Event "message_edit" has been triggered! (server="{after.guild.name}", server_id={after.guild.id},'
+                f' member={after.author.global_name}, member_id={after.author.id})')
+    await handle("message_edit", after.author, after.guild, after, event_channel=after.channel)
+
+
+@client.event
+async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent) -> None:
+    """Handle message_delete triggers. Uncached messages are skipped (no author)."""
+    if payload.guild_id is None:
+        return
+    msg = payload.cached_message
+    if msg is None or msg.author.bot:
+        return
+    f_log = log.getChild("event.message_delete")
+    guild = client.get_guild(payload.guild_id)
+    if guild is None:
+        try:
+            guild = await client.fetch_guild(payload.guild_id)
+        except discord.NotFound:
+            return
+    f_log.debug(f'Event "message_delete" has been triggered! (server="{guild.name}", server_id={guild.id},'
+                f' member={msg.author.global_name}, member_id={msg.author.id})')
+    await handle("message_delete", msg.author, guild, msg, event_channel=msg.channel)
+
+
+@client.event
+async def on_member_update(before: discord.Member, after: discord.Member) -> None:
+    """Dispatch role, nickname, and boost triggers from a member update."""
+    f_log = log.getChild("event.member_update")
+    if before.roles != after.roles:
+        added = set(after.roles) - set(before.roles)
+        removed = set(before.roles) - set(after.roles)
+        if added:
+            f_log.debug(f'Event "role_add" has been triggered! (server={after.guild.name}, member={after.id})')
+            await handle("role_add", after, after.guild, [before, after])
+        if removed:
+            f_log.debug(f'Event "role_remove" has been triggered! (server={after.guild.name}, member={after.id})')
+            await handle("role_remove", after, after.guild, [before, after])
+    if before.nick != after.nick:
+        f_log.debug(f'Event "nickname_change" has been triggered! (server={after.guild.name}, member={after.id})')
+        await handle("nickname_change", after, after.guild, [before, after])
+    if before.premium_since is None and after.premium_since is not None:
+        f_log.debug(f'Event "member_boost" has been triggered! (server={after.guild.name}, member={after.id})')
+        await handle("member_boost", after, after.guild, [before, after])
 
 
 @client.event
@@ -1334,7 +1449,7 @@ async def on_guild_join(guild: discord.Guild) -> None:
                           color=EMBED_COLOR)
     embed.add_field(name="What is this bot?",
                     value="Triggered is an if-this-then-that bot for Discord. Create a trigger for a message,"
-                          " reaction, voice-channel, or member join/leave event, then attach one or more actions.")
+                          " reaction, voice, role, or timed event, then attach one or more actions.")
     embed.add_field(name="I'm a developer - How do I make my custom triggers?",
                     value="If you think you have an idea,"
                           " please go to the [GitHub](https://github.com/quantumbagel/Triggered)"
