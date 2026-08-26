@@ -10,16 +10,15 @@ Triggered is a self-hostable Discord **if-this-then-that** bot. You create a **t
 
 - Slash-command workflow for creating, attaching, viewing, and deleting automations
 - Built-in triggers for messages, reactions, voice channels, and member join/leave
-- Built-in dos for sending a channel message or a DM
+- Built-in dos for channel messages, DMs, custom text, reactions, and role changes
 - Server-wide permission role plus channel/role white/blacklists
 - Per-user white/blacklists so people can opt in or out of being targeted
 - MongoDB storage, per-guild data isolation, and cleanup when the bot is kicked
-- Optional git auto-update against `main`, `stable`, or `dev`
 
 ## Requirements
 
 - Python 3.10+
-- A running **MongoDB** instance (local is strongly recommended; this bot talks to the database a lot)
+- A running **MongoDB** instance (local is strongly recommended; this bot talks to the database a lot :D)
 - A Discord application/bot with these **Privileged Gateway Intents** enabled:
   - Server Members Intent
   - Message Content Intent
@@ -38,7 +37,7 @@ pip install -e .
 
 1. Create a Discord application at [https://discord.com/developers/applications](https://discord.com/developers/applications).
 2. Create a bot user, copy the token, and enable the privileged intents listed above.
-3. Invite the bot with `applications.commands` and permission to view channels, send messages, and embed links.
+3. Invite the bot with `applications.commands` and permission to view channels, send messages, embed links, add reactions, and manage roles (the last two are only required for those dos).
 4. Start MongoDB. The default URI is `mongodb://localhost:27017`.
 5. Copy `configuration/config.example.json` to `configuration/config.json` and fill in your bot token, owner ID, and MongoDB URI.
 6. Run the bot:
@@ -55,19 +54,16 @@ python bot.py
 
 All runtime settings live in `configuration/config.json`. Any of them can be overridden with a matching `TRIGGERED_*` environment variable (useful for Docker).
 
-| Key                     | Type   | Meaning                                                                                                          |
-|-------------------------|--------|------------------------------------------------------------------------------------------------------------------|
-| `bot_secret`            | string | Discord bot token.                                                                                               |
-| `mongodb_uri`           | string | MongoDB connection string.                                                                                       |
-| `owner_id`              | int    | Discord user ID allowed to run owner text commands (`triggered/sync`, enable/disable).                           |
-| `max_dos_per_trigger`   | int    | Maximum actions that can be attached to one trigger. Default: `3`.                                               |
-| `argument_length_limit` | int    | Max length for names, descriptions, and text arguments. Default: `128`.                                          |
-| `allowed_execution`     | int    | Reserved for execution limits.                                                                                   |
-| `check_for_updates`     | bool   | On startup, fetch the remote and warn if a newer commit exists.                                                  |
-| `auto_update`           | bool   | If an update is available, check out the configured stream, pull, and exit so a process manager can restart you. |
-| `update_to`             | string | Git branch to follow: `main`, `stable`, or `dev`.                                                                |
+| Key                     | Type   | Meaning                                                                                            |
+|-------------------------|--------|----------------------------------------------------------------------------------------------------|
+| `bot_secret`            | string | Discord bot token.                                                                                 |
+| `mongodb_uri`           | string | MongoDB connection string.                                                                         |
+| `owner_id`              | int    | Discord user ID allowed to run owner text commands (`triggered/sync`, enable/disable).             |
+| `max_dos_per_trigger`   | int    | Maximum actions that can be attached to one trigger. Default: `3`.                                 |
+| `argument_length_limit` | int    | Max length for names, descriptions, and text arguments. Default: `128`.                            |
+| `allowed_execution`     | int    | Reserved for execution limits.                                                                     |
 
-Environment overrides use the same names in uppercase with a `TRIGGERED_` prefix, for example `TRIGGERED_BOT_SECRET`, `TRIGGERED_MONGODB_URI`, `TRIGGERED_OWNER_ID`. Booleans accept `true`/`false` (or `1`/`0`).
+Environment overrides use the same names in uppercase with a `TRIGGERED_` prefix, for example `TRIGGERED_BOT_SECRET`, `TRIGGERED_MONGODB_URI`, `TRIGGERED_OWNER_ID`.
 
 `configuration/requirements.json` is **not** server config. It maps trigger/do IDs to Python classes so the bot can load them dynamically. The module file is inferred from the ID (`contains-text` → `actions/triggers/contains_text.py`) unless you set `"module"` on the entry.
 
@@ -90,8 +86,8 @@ Slash commands only work in guilds, not DMs.
 
 | Command | What it does |
 | --- | --- |
-| `/triggered new` | Create a trigger. Required: `name`, `trigger`. Optional: `description` plus the argument that trigger needs (`trigger_text`, `trigger_role`, `trigger_emoji`, `trigger_vc`, …). |
-| `/triggered add` | Attach a do to an existing trigger. Required: `trigger_name`, `do`, `do_name`. Optional: `description` plus the argument that do needs (`do_channel`, `do_member`, …). |
+| `/triggered new` | Create a trigger. Required: `name`, `trigger`. Optional: `description` plus the argument that trigger needs (`trigger_text`, `trigger_role`, `trigger_member`, `trigger_emoji`, `trigger_vc`, `trigger_channel`, …). |
+| `/triggered add` | Attach a do to an existing trigger. Required: `trigger_name`, `do`, `do_name`. Optional: `description` plus the argument that do needs (`do_channel`, `do_member`, `do_role`, `do_emoji`, `do_text`, …). |
 | `/triggered delete` | Delete a trigger (and its dos) or a single do. |
 | `/triggered view` | `List all`, `View` one trigger by name, or `Search` by name / author / type. |
 | `/triggered server-configure` | Guild permission settings. Requires Discord Administrator. |
@@ -116,17 +112,22 @@ These only work if your Discord user ID matches `owner_id`.
 
 Pass the matching `/triggered new` argument for each type.
 
-| Dropdown name     | ID                 | Event                   | Required argument                 |
-|-------------------|--------------------|-------------------------|-----------------------------------|
-| Contains Text     | `contains-text`    | Message sent            | `trigger_text` — substring match  |
-| Contains Word     | `contains-word`    | Message sent            | `trigger_text` — whole-word match |
-| Role Mentioned    | `role-mentioned`   | Message sent            | `trigger_role`                    |
-| Reaction Added    | `reaction-added`   | Reaction added          | `trigger_emoji`                   |
-| Reaction Removed  | `reaction-removed` | Reaction removed        | `trigger_emoji`                   |
-| Joined VC Channel | `join-vc`          | Member joins voice      | `trigger_vc`                      |
-| Left VC Channel   | `left-vc`          | Member leaves voice     | `trigger_vc`                      |
-| Member Joined     | `member-joined`    | Member joins the guild  | none                              |
-| Member Left       | `member-left`      | Member leaves the guild | none                              |
+| Dropdown name     | ID                   | Event                   | Required argument                 |
+|-------------------|----------------------|-------------------------|-----------------------------------|
+| Contains Text     | `contains-text`      | Message sent            | `trigger_text` — substring match  |
+| Contains Word     | `contains-word`      | Message sent            | `trigger_text` — whole-word match |
+| Role Mentioned    | `role-mentioned`     | Message sent            | `trigger_role`                    |
+| User Mentioned    | `user-mentioned`     | Message sent            | `trigger_member`                  |
+| Sent By           | `sent-by`            | Message sent            | `trigger_member`                  |
+| In Channel        | `in-channel`         | Message sent            | `trigger_channel`                 |
+| Has Attachment    | `has-attachment`     | Message sent            | none                              |
+| Everyone Mentioned| `everyone-mentioned` | Message sent            | none — `@everyone` or `@here`     |
+| Reaction Added    | `reaction-added`     | Reaction added          | `trigger_emoji`                   |
+| Reaction Removed  | `reaction-removed`   | Reaction removed        | `trigger_emoji`                   |
+| Joined VC Channel | `join-vc`            | Member joins voice      | `trigger_vc`                      |
+| Left VC Channel   | `left-vc`            | Member leaves voice     | `trigger_vc`                      |
+| Member Joined     | `member-joined`      | Member joins the guild  | none                              |
+| Member Left       | `member-left`        | Member leaves the guild | none                              |
 
 ## Built-in dos
 
@@ -134,8 +135,14 @@ Pass the matching `/triggered new` argument for each type.
 | --- | --- | --- | --- |
 | Send Message | `send-message` | `do_channel` | Posts an embed in that channel describing what fired. |
 | Send DM | `send-dm` | `do_member` | DMs that member the same kind of embed. |
+| Send Text | `send-text` | `do_channel`, `do_text` | Posts your custom text in that channel. |
+| Add Reaction | `add-reaction` | `do_emoji` | Reacts to the triggering message. Only attachable to message triggers. |
+| Add Role | `add-role` | `do_role` | Gives that role to the member who fired the trigger. |
+| Remove Role | `remove-role` | `do_role` | Removes that role from the member who fired the trigger. |
 
 Bots never fire triggers. If a do targets a member, that member's user-configure lists are checked first.
+
+`add-role` and `remove-role` need **Manage Roles**, and the bot's role must sit above the role being granted or removed. `add-reaction` needs **Add Reactions**.
 
 ---
 
@@ -185,7 +192,7 @@ Open a pull request against `dev` if you want it in the public bot.
 bot.py                         # Discord client, slash commands, event routing
 actions/triggers/              # Trigger implementations (snake_case modules)
 actions/dos/                   # Do implementations
-backend/                      # Encoding, validation, pagination, git updates
+backend/                      # Encoding, validation, pagination
 configuration/config.json      # Runtime settings (token, MongoDB, owner)
 configuration/requirements.json
 pyproject.toml                 # Package metadata and dependencies
@@ -197,10 +204,8 @@ Dockerfile / docker-compose.yml
 | Branch | Role |
 | --- | --- |
 | `main` | Public stable snapshot (v1.0). Clone this. |
-| `stable` | Auto-update stream. Kept in sync with `main` for existing configs that still set `update_to` to `"stable"`. |
+| `stable` | Kept in sync with `main`. |
 | `dev` | Active development. May be ahead of `main`. |
-
-If you enable `auto_update`, run the process under systemd, Docker, or another supervisor — the bot exits after a successful pull so it can be restarted on the new commit.
 
 ## Tests
 
@@ -217,7 +222,7 @@ Copy `.env.example` to `.env` and set your bot token and owner ID. Then:
 docker compose up --build
 ```
 
-Compose starts MongoDB and the bot. The bot reads `configuration/config.example.json` inside the image and applies `TRIGGERED_*` environment variables from Compose (Mongo URI, token, owner, and auto-update off).
+Compose starts MongoDB and the bot. The bot reads `configuration/config.example.json` inside the image and applies `TRIGGERED_*` environment variables from Compose (Mongo URI, token, owner).
 
 To use a local `configuration/config.json` instead, bind-mount it onto `/app/configuration/config.json`. Environment variables still win when set.
 

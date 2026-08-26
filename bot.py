@@ -100,32 +100,6 @@ triggered = app_commands.Group(name="triggered", description="The heart and soul
 # I don't think that description is visible anywhere, but maybe it is lol.
 CURRENT_REV = git_tools.get_git_revision_short_hash()
 log.info(f"Welcome to Triggered by @quantumbagel! (git revision: {CURRENT_REV})")
-# Check for updates
-
-if configuration['check_for_updates']:
-    should_update, commit_hash, current_long, our_time, new_time = (
-        git_tools.check_for_updates(configuration["update_to"]))
-    out_of_date_by = new_time - our_time
-    if configuration['auto_update'] and should_update:
-        log.warning(f"Triggered is updating from commit {current_long} to {commit_hash}"
-                    f" (stream={configuration['update_to']}, out_of_date_by={out_of_date_by}s)."
-                    f" The program will then close. If you want Triggered to automatically restart"
-                    f", please use systemd or Docker (recommended)")
-        success, exception = git_tools.update_to(configuration["update_to"])
-        if success:
-            log.warning("Successfully updated Triggered! Stopping.")
-            sys.exit(0)
-        else:
-            log.warning("Failed to update Triggered! The program will continue to run."
-                        " If GitHub is blocked, then disable the check_for_updates configuration option"
-                        f" to speed up the program's start.\nException information: {exception}.")
-
-    elif not configuration['auto_update'] and should_update:
-        log.warning(f"Triggered has an available update (stream={configuration['update_to']},"
-                    f" out_of_date_by={out_of_date_by}s)."
-                    f"Current commit hash: {current_long}. New commit hash: {commit_hash}.\nYou can update manually,"
-                    f" update automatically by enabling the auto_update configuration option, or turn these warnings"
-                    f" off by disabling the check_for_updates configuration option.")
 
 
 def generate_simple_embed(title: str, description: str) -> discord.Embed:
