@@ -11,7 +11,7 @@ from backend.ui.panels import build_list_page_view
 
 
 def page_slice(data: list, current_page: int, sep: int) -> list:
-    """Return the slice of data that belongs on current_page (1-indexed)."""
+    """The items on this page (pages start at 1)."""
     if current_page < 1 or sep < 1:
         return []
     from_item = (current_page - 1) * sep
@@ -31,7 +31,7 @@ class PaginationView:
         sep: int = 3,
     ):
         """
-        Paginate trigger list rows as a Components V2 layout.
+        Paginate trigger lists.
         """
         self.current_page = 1
         self.sep = sep

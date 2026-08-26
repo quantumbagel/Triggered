@@ -82,7 +82,7 @@ if DO_REQUIREMENTS is None:  # Error has occurred, print and exit
     log.critical(f"Invalid data ({TRIGGER_REQUIREMENTS})")
     sys.exit(1)
 
-# Visible name + registry id for autocomplete (avoids Discord's 25-choice cap)
+# Names + ids for autocomplete (discord only lets you send 25 at a time)
 TRIGGER_CHOICE_ITEMS = [
     (TRIGGER_REQUIREMENTS[action_id]["class"]().dropdown_name(), action_id)
     for action_id in TRIGGER_REQUIREMENTS
@@ -118,12 +118,12 @@ ui_runtime.configure(Compiler(_emoji_resolver, accent_color=EMBED_COLOR), _emoji
 async def respond(ctx: discord.Interaction, title: str, description: str = "", *,
                   kind: str = "error", sections: list[tuple[str, str]] | None = None,
                   ephemeral: bool = True) -> None:
-    """Send a Components V2 notice panel in response to a slash command."""
+    """Reply to a slash command."""
     await reply_panel(ctx, title, description or None, kind=kind, sections=sections, ephemeral=ephemeral)
 
 
 def iter_guild_collections(guild_id) -> list[tuple[str, str]]:
-    """Return (collection_name, trigger_name) pairs for a guild."""
+    """Find this guild's trigger collections."""
     prefix = f"{guild_id}."
     found = []
     for col in watching_commands_access.list_collection_names():
@@ -285,7 +285,7 @@ async def autocomplete_do_name(ctx: discord.Interaction, current: str) -> list[a
                                            " All optional arguments are dependent"
                                            " on the type of trigger that you choose.")
 @app_commands.autocomplete(trigger=autocomplete_trigger_type)
-@app_commands.describe(trigger="Trigger type. Type to search — pick one from autocomplete.")
+@app_commands.describe(trigger="The trigger type. Just start typing.")
 async def new(ctx: discord.Interaction, name: str, trigger: str, description: str = None,
               trigger_role: discord.Role = None, trigger_member: discord.Member = None, trigger_text: str = None,
               trigger_emoji: str = None, trigger_vc: discord.VoiceChannel = None,
@@ -312,12 +312,12 @@ async def new(ctx: discord.Interaction, name: str, trigger: str, description: st
 
     if not name or not name.strip():
         await respond(ctx, "Trigger name can't be empty!",
-                                      "Please provide a name for this trigger.")
+                                      "You have to give it a name.")
         return
 
     if trigger not in TRIGGER_REQUIREMENTS:
         await respond(ctx, f"Unknown trigger \"{trigger}\"!",
-                                      "Pick a trigger type from the autocomplete list. Type to search by name or id.")
+                                      "That isn't a real trigger type. Start typing and pick one from autocomplete.")
         return
 
     permissions_valid, title, subheading = await check_permissions(
@@ -382,8 +382,8 @@ async def new(ctx: discord.Interaction, name: str, trigger: str, description: st
 @triggered.command(name="add", description="Add a do to a Trigger."
                                            " All optional arguments are dependent on the type of do that you choose.")
 @app_commands.autocomplete(do=autocomplete_do_type, trigger_name=autocomplete_trigger_name)
-@app_commands.describe(do="Action type. Type to search — pick one from autocomplete.",
-                       trigger_name="Existing trigger to attach this do to.")
+@app_commands.describe(do="The do type. Just start typing.",
+                       trigger_name="The trigger to add this do to.")
 async def add(ctx: discord.Interaction, trigger_name: str, do: str, do_name: str,
               description: str = None, do_member: discord.Member = None,
               do_channel: discord.TextChannel = None, do_vc: discord.VoiceChannel = None, do_text: str = None,
@@ -412,12 +412,12 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: str, do_name: str
 
     if not trigger_name or not trigger_name.strip() or not do_name or not do_name.strip():
         await respond(ctx, "Trigger name and do name are required!",
-                                      "Please provide both `trigger_name` and `do_name`.")
+                                      "You have to provide both `trigger_name` and `do_name`.")
         return
 
     if do not in DO_REQUIREMENTS:
         await respond(ctx, f"Unknown do \"{do}\"!",
-                                      "Pick a do type from the autocomplete list. Type to search by name or id.")
+                                      "That isn't a real do type. Start typing and pick one from autocomplete.")
         return
 
     permissions_valid, title, subheading = await check_permissions(
@@ -1007,7 +1007,7 @@ async def user_configure(ctx: discord.Interaction, command_mode: app_commands.Ch
 
 @triggered.command(name="about", description="Information about Triggered")
 async def about(ctx: discord.Interaction) -> None:
-    """Show the about panel. Works in DMs and does not require the permission role."""
+    """Show the about panel. Works in DMs."""
     f_log = log.getChild("about")
     if not IS_ACTIVE:
         await respond(ctx, "Bot has been disabled!",
@@ -1160,7 +1160,7 @@ async def handle(id_type: str, creator: discord.Member = None, guild: discord.Gu
 
 
 async def tick_scheduled_triggers() -> None:
-    """Fire any due scheduled triggers once."""
+    """Run scheduled triggers that are due."""
     f_log = log.getChild("scheduler")
     now = time.time()
     for guild in client.guilds:
@@ -1197,7 +1197,7 @@ async def tick_scheduled_triggers() -> None:
 
 
 async def run_scheduled_triggers() -> None:
-    """Background loop that ticks scheduled triggers."""
+    """Loop that fires scheduled triggers."""
     await client.wait_until_ready()
     f_log = log.getChild("scheduler")
     f_log.info("Scheduled trigger loop started.")
@@ -1288,7 +1288,7 @@ async def on_message(msg: discord.Message) -> None:
 
 @client.event
 async def on_message_edit(before: discord.Message, after: discord.Message) -> None:
-    """Handle message_edit triggers. Ignore embed-only or pin updates with unchanged content."""
+    """Handle message_edit triggers. Ignore edits that didn't change the text."""
     if after.guild is None:
         return
     if before.content == after.content:
@@ -1301,7 +1301,7 @@ async def on_message_edit(before: discord.Message, after: discord.Message) -> No
 
 @client.event
 async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent) -> None:
-    """Handle message_delete triggers. Uncached messages are skipped (no author)."""
+    """Handle message_delete triggers. If we don't have the message cached, skip it."""
     if payload.guild_id is None:
         return
     msg = payload.cached_message
@@ -1321,7 +1321,7 @@ async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent) -> None:
 
 @client.event
 async def on_member_update(before: discord.Member, after: discord.Member) -> None:
-    """Dispatch role, nickname, and boost triggers from a member update."""
+    """Handle role/nick/boost triggers from member updates."""
     f_log = log.getChild("event.member_update")
     if before.roles != after.roles:
         added = set(after.roles) - set(before.roles)

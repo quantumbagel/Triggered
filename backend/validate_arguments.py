@@ -56,7 +56,7 @@ def is_do_valid(variables: dict, do: str, requirements: dict, trigger_type: str)
 
 def validate_emoji(emoji_name):
     """
-    Validate a unicode emoji or a Discord custom emoji of the form <:name:id> / <a:name:id>.
+    Validate a unicode emoji or a Discord custom emoji (<:name:id> / <a:name:id>).
     :param emoji_name: The emoji
     :return: Whether the emoji is valid.
     """

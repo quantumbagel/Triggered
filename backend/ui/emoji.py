@@ -113,7 +113,7 @@ class EmojiResolver:
         return self._config
 
     async def upload_missing(self, bot: discord.Client, assets_dir: Path) -> int:
-        """Create application emojis for files in assets_dir that are not uploaded yet."""
+        """Upload custom emojis from assets that aren't on the app yet."""
         if not assets_dir.exists():
             return 0
         existing = {emoji.name: emoji for emoji in await bot.fetch_application_emojis()}

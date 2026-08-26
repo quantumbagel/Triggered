@@ -42,10 +42,9 @@ def build_about_view(emoji: EmojiResolver, active_tab: str = "main") -> LayoutVi
         container.add_text(
             TextDisplay(
                 markdown_content=(
-                    "Triggered is a self-hostable Discord **if-this-then-that** bot. "
-                    "You create a **trigger** (something that happens in a server) and attach "
-                    "one or more **dos** (actions the bot should take). Example: if a message "
-                    "contains `hello`, send a notification to `#alerts`."
+                    "Triggered is a IFTTT discord bot. You pick a **trigger** (something that "
+                    "happens) and attach **dos** (stuff the bot should do). Example: if a "
+                    "message contains `hello`, ping `#alerts`."
                 )
             )
         )
@@ -60,7 +59,7 @@ def build_about_view(emoji: EmojiResolver, active_tab: str = "main") -> LayoutVi
         container.add_text(
             TextDisplay(
                 markdown_content=(
-                    "-# This project is developed by [@quantumbagel](https://github.com/quantumbagel)."
+                    "-# Made by [@quantumbagel](https://github.com/quantumbagel)"
                 )
             )
         )
@@ -107,13 +106,11 @@ def build_about_view(emoji: EmojiResolver, active_tab: str = "main") -> LayoutVi
             TextDisplay(
                 markdown_content=(
                     "Some background on how this project came about:\n"
-                    "* Discord servers collect a lot of “when X happens, do Y” rules — welcome "
-                    "messages, reaction roles, moderation, alerts — and I wanted those without "
-                    "paying a third-party automation host or writing a one-off bot for each rule.\n"
-                    "* Triggered is that idea as a self-hostable bot: named triggers, attached dos, "
-                    "slash-command setup, and MongoDB for per-guild storage.\n"
-                    "* The same Components V2 presentation language used in "
-                    "[Strife](https://github.com/quantumbagel/Strife) now drives this bot's UI.\n\n"
+                    "* I wanted a bot that could do “when X happens, do Y” without paying for "
+                    "some automation host or writing a new bot every time.\n"
+                    "* So Triggered is that: named triggers, attached dos, slash commands, MongoDB.\n"
+                    "* The UI is Components V2, same idea as "
+                    "[Strife](https://github.com/quantumbagel/Strife).\n\n"
                     "If you like what I've done here, I'm always looking for new opportunities :D"
                 )
             )
@@ -149,11 +146,9 @@ def build_about_view(emoji: EmojiResolver, active_tab: str = "main") -> LayoutVi
         container.add_text(
             TextDisplay(
                 markdown_content=(
-                    "Triggered is built using the following open-source libraries:\n\n"
-                    "* **[discord.py](https://github.com/Rapptz/discord.py)** — Modern, easy to use, "
-                    "feature-rich, and async ready API wrapper for Discord. (MIT)\n"
-                    "* **[PyMongo](https://github.com/mongodb/mongo-python-driver)** — The official "
-                    "MongoDB driver for Python. (Apache 2.0)\n"
+                    "Libraries this bot uses:\n\n"
+                    "* **[discord.py](https://github.com/Rapptz/discord.py)** — Discord API wrapper. (MIT)\n"
+                    "* **[PyMongo](https://github.com/mongodb/mongo-python-driver)** — MongoDB driver. (Apache 2.0)\n"
                     "* **[emoji](https://github.com/carpedm20/emoji)** — Emoji for Python. (BSD)"
                 )
             )
@@ -162,11 +157,9 @@ def build_about_view(emoji: EmojiResolver, active_tab: str = "main") -> LayoutVi
         container.add_text(
             TextDisplay(
                 markdown_content=(
-                    "Other attributions:\n\n"
-                    "* **[icons8](https://icons8.com)** — Most of the custom emojis used in this "
-                    "project are from icons8. (Free for personal use)\n"
-                    "* **[Strife](https://github.com/quantumbagel/Strife)** — The Components V2 "
-                    "layout language this bot uses was developed there first. (MIT)"
+                    "Other credits:\n\n"
+                    "* **[icons8](https://icons8.com)** — most of the custom emojis. (Free for personal use)\n"
+                    "* **[Strife](https://github.com/quantumbagel/Strife)** — I built the layout stuff there first. (MIT)"
                 )
             )
         )

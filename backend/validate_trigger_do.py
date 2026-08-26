@@ -11,12 +11,12 @@ valid_type_names = [
 
 
 def action_module_name(item_id: str, spec: dict) -> str:
-    """Map a registry ID to a Python module name (hyphens become underscores)."""
+    """Turn an id like contains-text into a module name."""
     return spec.get("module") or item_id.replace("-", "_")
 
 
 def load_action_class(kind: str, item_id: str, spec: dict):
-    """Import the class registered for a trigger or do."""
+    """Import the class for a trigger or do."""
     module = importlib.import_module(f"actions.{kind}.{action_module_name(item_id, spec)}")
     return getattr(module, spec["class"])
 

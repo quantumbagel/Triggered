@@ -1,19 +1,4 @@
-"""Shared Components V2 layout language, ported from Strife.
-
-Layout
-------
-One ``Container`` per message.
-
-1. Header — ``### {emoji} Title``. Breadcrumbs use the ``forward`` emoji:
-   ``Triggered {forward} About``.
-2. Subtitle — one ``-#`` line for counts, status, or a short hint.
-3. Divider — a visible separator between major sections. Use an invisible
-   spacer when you only need air, not a rule.
-4. Body — sentence-case copy, ``**Section Title**`` headings, custom-emoji
-   bullets. Metadata and hints stay on ``-#`` lines.
-5. Actions — ``SECONDARY`` by default, ``PRIMARY`` for the main CTA,
-   ``SUCCESS`` / ``DANGER`` only when the action itself confirms or destroys.
-"""
+"""Helpers for building layouts. Mostly stolen from Strife."""
 
 from __future__ import annotations
 
@@ -103,7 +88,7 @@ def notice_view(
     body: str | None = None,
     sections: list[tuple[str, str]] | None = None,
 ) -> LayoutView:
-    """Compact panel used for command feedback, notices, and errors."""
+    """Tiny panel for command replies / errors."""
     container = Container()
     add_header(container, title, emoji=emoji)
     if body:

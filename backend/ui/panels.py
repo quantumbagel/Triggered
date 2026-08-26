@@ -51,36 +51,43 @@ def build_welcome_view(emoji: EmojiResolver) -> LayoutView:
     add_spacer(container)
     add_body(
         container,
-        "Thanks for adding me to your server :D Here's some tips on how to get started.\n"
-        "This introduction doesn't cover every command — see the README (linked below) for that.",
+        "Thanks for adding me to your server :D\nHere's some tips on how to get started.",
     )
     add_divider(container)
     add_section(
         container,
         "What is this bot?",
-        "Triggered is an if-this-then-that bot for Discord. Create a trigger for a message, "
-        "reaction, voice, role, or timed event, then attach one or more actions.",
+        "Triggered is a IFTTT bot (if-this-then-that) for Discord. Message sent, reaction, "
+        "voice, role, timer, whatever — then do something.",
     )
     add_divider(container)
     add_section(
         container,
-        "I'm a developer — how do I make custom triggers?",
-        "If you have an idea, go to the [GitHub](https://github.com/quantumbagel/Triggered) "
-        "and submit a pull request. You might see your trigger or do in the main bot!",
+        "I'm a developer - How do I make my custom triggers?",
+        "If you think you have an idea, please go to the "
+        "[GitHub](https://github.com/quantumbagel/Triggered) and submit a pull request with "
+        "your code. You might see your trigger/do in the main bot!",
     )
     add_divider(container)
     add_section(
         container,
-        "I'm not a developer — I just want to use this bot!",
-        "Read the [README](https://github.com/quantumbagel/Triggered/blob/main/README.md) "
+        "Bro, I'm not a developer - I just want to use this bot!",
+        "Please read the [README](https://github.com/quantumbagel/Triggered/blob/main/README.md) "
         "for command usage :D",
     )
     add_divider(container)
     add_section(
         container,
         "I can't use /triggered!",
-        "Triggered has a settable permission role. If this role is set, you must have it to "
-        "use commands. Otherwise, you must be ranked higher in the role hierarchy than Triggered.",
+        "If a permission role is set, you need it. Otherwise your highest role has to sit "
+        "above the bot. Ask an admin if you don't have access.",
+    )
+    add_divider(container)
+    add_section(
+        container,
+        "A quick note to **ADMINS**:",
+        "Set a Required Role in `/triggered server-configure` unless you want random people "
+        "making triggers. You have been warned.",
     )
     add_divider(container)
     add_section(

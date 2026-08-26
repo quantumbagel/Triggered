@@ -8,7 +8,7 @@ def parse_duration_seconds(text: str | None) -> int | None:
     """
     Parse a duration as seconds.
 
-    Accepts a bare integer (seconds) or shorthand: 60s, 5m, 1h, 1d.
+    Bare number = seconds, or 60s / 5m / 1h / 1d.
     """
     if not text or not isinstance(text, str):
         return None
@@ -24,7 +24,7 @@ def parse_duration_seconds(text: str | None) -> int | None:
 
 
 def validate_duration(value: str, spec: dict) -> tuple[bool, str]:
-    """Return whether a duration string satisfies min/max bounds from a param spec."""
+    """Check a duration string against min/max from the param spec."""
     seconds = parse_duration_seconds(value)
     if seconds is None:
         return False, "Invalid duration! Use seconds or shorthand like 60s, 5m, 1h, 1d."

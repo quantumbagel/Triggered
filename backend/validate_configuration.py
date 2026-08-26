@@ -12,7 +12,7 @@ ENV_OVERRIDES = {
 
 
 def apply_env_overrides(config_dictionary: dict) -> dict:
-    """Return a copy of config with TRIGGERED_* environment variables applied."""
+    """Overlay TRIGGERED_* env vars onto the config dict."""
     updated = dict(config_dictionary)
     for env_name, (key, caster) in ENV_OVERRIDES.items():
         raw = os.environ.get(env_name)

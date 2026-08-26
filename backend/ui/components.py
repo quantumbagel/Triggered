@@ -182,7 +182,7 @@ class Container:
 
 @dataclass
 class ViewFile:
-    """Binary attachment for a layout. Host converts this to a Discord file."""
+    """A file to attach to a layout."""
 
     data: bytes
     filename: str

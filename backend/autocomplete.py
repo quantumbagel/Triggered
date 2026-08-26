@@ -1,4 +1,4 @@
-"""Filter helpers for Discord slash-command autocomplete (25-result cap)."""
+"""Autocomplete helpers. Discord only lets you send 25 results."""
 
 MAX_RESULTS = 25
 
@@ -6,10 +6,9 @@ MAX_RESULTS = 25
 def filter_autocomplete(current: str, items: list[tuple[str, str]], *,
                         limit: int = MAX_RESULTS) -> list[tuple[str, str]]:
     """
-    Return (label, value) pairs matching current, ranked and capped.
+    Filter (name, id) pairs down to what Discord will accept.
 
-    Matches against the visible name and the submitted id. Prefix matches
-    rank above substring matches so typing still finds items past the cap.
+    Prefix matches come first so typing still finds stuff past the 25-result cap.
     """
     needle = (current or "").strip().lower()
     matched: list[tuple[int, str, str]] = []

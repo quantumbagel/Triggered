@@ -1,8 +1,8 @@
-"""Access-list helpers for server and user white/blacklists."""
+"""Whitelist/blacklist helpers."""
 
 
 def normalize_mode(mode: str | None) -> str | None:
-    """Return whitelist/blacklist in lowercase, or None if missing."""
+    """Lowercase whitelist/blacklist, or None if it's missing/garbage."""
     if mode is None:
         return None
     lowered = str(mode).strip().lower()
@@ -13,9 +13,9 @@ def normalize_mode(mode: str | None) -> str | None:
 
 def item_is_denied(encoded_item, access_list: dict | None, *, default_allow: bool) -> bool:
     """
-    Return True if this encoded Discord object is blocked by the access list.
+    True if this encoded Discord object is blocked.
 
-    None items are skipped (not denied). A missing list uses default_allow.
+    None items are skipped. A missing list uses default_allow.
     """
     if encoded_item is None:
         return False
@@ -31,7 +31,7 @@ def item_is_denied(encoded_item, access_list: dict | None, *, default_allow: boo
 
 
 def any_item_denied(encoded_items: list, access_list: dict | None, *, default_allow: bool) -> bool:
-    """Return True if any non-None item in encoded_items is denied."""
+    """True if any of these items is blocked."""
     return any(
         item_is_denied(item, access_list, default_allow=default_allow)
         for item in encoded_items
