@@ -9,6 +9,7 @@ Triggered is a self-hostable Discord **if-this-then-that** bot. You create a **t
 ## Features
 
 - Slash-command workflow for creating, attaching, viewing, and deleting automations
+- Discord Components V2 panels for command replies, pagination, about, and fired-rule messages
 - Autocomplete for trigger/do types and existing names (type to search; not limited to Discord's 25-choice dropdown)
 - Built-in triggers for messages, edits, deletes, reactions, voice, roles, nicknames, boosts, and a timed clock
 - Built-in dos for messages, DMs, replies, reactions, roles, voice moves, and moderation
@@ -93,6 +94,7 @@ Slash commands only work in guilds, not DMs.
 | `/triggered view` | `List all`, `View` one trigger by name, or `Search` by name / author / type. |
 | `/triggered server-configure` | Guild permission settings. Requires Discord Administrator. |
 | `/triggered user-configure` | Your personal white/blacklist of other members. |
+| `/triggered about` | About the project (background, attributions, GitHub). Works in DMs. |
 
 ### Owner text commands
 
@@ -106,6 +108,7 @@ These only work if your Discord user ID matches `owner_id`.
 | `triggered/disable` | Disable command handling without shutting the process down. |
 | `triggered/enable` | Re-enable command handling. |
 | `triggered/toggle` | Flip enabled/disabled. |
+| `triggered/emoji-upload` | Upload missing custom emojis from `assets/emoji` as application emojis. |
 
 ---
 
@@ -113,47 +116,47 @@ These only work if your Discord user ID matches `owner_id`.
 
 Pass the matching `/triggered new` argument for each type.
 
-| Dropdown name     | ID                   | Event                   | Required argument                 |
-|-------------------|----------------------|-------------------------|-----------------------------------|
-| Contains Text     | `contains-text`      | Message sent            | `trigger_text` — substring match  |
-| Contains Word     | `contains-word`      | Message sent            | `trigger_text` — whole-word match |
-| Role Mentioned    | `role-mentioned`     | Message sent            | `trigger_role`                    |
-| User Mentioned    | `user-mentioned`     | Message sent            | `trigger_member`                  |
-| Sent By           | `sent-by`            | Message sent            | `trigger_member`                  |
-| In Channel        | `in-channel`         | Message sent            | `trigger_channel`                 |
-| Has Attachment    | `has-attachment`     | Message sent            | none                              |
-| Everyone Mentioned| `everyone-mentioned` | Message sent            | none — `@everyone` or `@here`     |
-| Starts With       | `starts-with`        | Message sent            | `trigger_text` — prefix match     |
-| Message Edited    | `message-edited`     | Message edited          | optional `trigger_channel`        |
-| Message Deleted   | `message-deleted`    | Message deleted         | optional `trigger_channel`        |
-| Reaction Added    | `reaction-added`     | Reaction added          | `trigger_emoji`                   |
-| Reaction Removed  | `reaction-removed`   | Reaction removed        | `trigger_emoji`                   |
-| Joined VC Channel | `join-vc`            | Member joins voice      | `trigger_vc`                      |
-| Left VC Channel   | `left-vc`            | Member leaves voice     | `trigger_vc`                      |
-| Role Added        | `role-added`         | Member gained a role    | `trigger_role`                    |
-| Role Removed      | `role-removed`       | Member lost a role      | `trigger_role`                    |
-| Nickname Changed  | `nickname-changed`   | Guild nickname changed  | none                              |
-| Member Boosted    | `member-boosted`     | Member boosted the guild| none                              |
-| Member Joined     | `member-joined`      | Member joins the guild  | none                              |
-| Member Left       | `member-left`        | Member leaves the guild | none                              |
-| Scheduled         | `scheduled`          | Interval clock          | `trigger_text` — duration (`5m`)  |
+| Dropdown name      | ID                   | Event                    | Required argument                 |
+|--------------------|----------------------|--------------------------|-----------------------------------|
+| Contains Text      | `contains-text`      | Message sent             | `trigger_text` — substring match  |
+| Contains Word      | `contains-word`      | Message sent             | `trigger_text` — whole-word match |
+| Role Mentioned     | `role-mentioned`     | Message sent             | `trigger_role`                    |
+| User Mentioned     | `user-mentioned`     | Message sent             | `trigger_member`                  |
+| Sent By            | `sent-by`            | Message sent             | `trigger_member`                  |
+| In Channel         | `in-channel`         | Message sent             | `trigger_channel`                 |
+| Has Attachment     | `has-attachment`     | Message sent             | none                              |
+| Everyone Mentioned | `everyone-mentioned` | Message sent             | none — `@everyone` or `@here`     |
+| Starts With        | `starts-with`        | Message sent             | `trigger_text` — prefix match     |
+| Message Edited     | `message-edited`     | Message edited           | optional `trigger_channel`        |
+| Message Deleted    | `message-deleted`    | Message deleted          | optional `trigger_channel`        |
+| Reaction Added     | `reaction-added`     | Reaction added           | `trigger_emoji`                   |
+| Reaction Removed   | `reaction-removed`   | Reaction removed         | `trigger_emoji`                   |
+| Joined VC Channel  | `join-vc`            | Member joins voice       | `trigger_vc`                      |
+| Left VC Channel    | `left-vc`            | Member leaves voice      | `trigger_vc`                      |
+| Role Added         | `role-added`         | Member gained a role     | `trigger_role`                    |
+| Role Removed       | `role-removed`       | Member lost a role       | `trigger_role`                    |
+| Nickname Changed   | `nickname-changed`   | Guild nickname changed   | none                              |
+| Member Boosted     | `member-boosted`     | Member boosted the guild | none                              |
+| Member Joined      | `member-joined`      | Member joins the guild   | none                              |
+| Member Left        | `member-left`        | Member leaves the guild  | none                              |
+| Scheduled          | `scheduled`          | Interval clock           | `trigger_text` — duration (`5m`)  |
 
 ## Built-in dos
 
-| Dropdown name | ID | Required argument | Effect |
-| --- | --- | --- | --- |
-| Send Message | `send-message` | `do_channel` | Posts an embed in that channel describing what fired. |
-| Send DM | `send-dm` | `do_member` | DMs that member the same kind of embed. |
-| Send Text | `send-text` | `do_channel`, `do_text` | Posts your custom text in that channel. |
-| Reply | `reply` | `do_text` | Replies to the triggering message. Message send/edit triggers only. |
-| Add Reaction | `add-reaction` | `do_emoji` | Reacts to the triggering message. Message send/edit triggers only. |
-| Delete Message | `delete-message` | none | Deletes the triggering message. Message send/edit triggers only. |
-| Add Role | `add-role` | `do_role` | Gives that role to the member who fired the trigger. |
-| Remove Role | `remove-role` | `do_role` | Removes that role from the member who fired the trigger. |
-| Move to VC | `move-to-vc` | `do_vc` | Moves the member who fired the trigger into that voice channel. They must already be in voice. |
-| Kick Member | `kick-member` | none | Kicks the member who fired the trigger. |
-| Timeout Member | `timeout-member` | `do_text` | Times out the member who fired the trigger. Duration like `10m` (max 28d). |
-| Ban Member | `ban-member` | none | Bans the member who fired the trigger. |
+| Dropdown name  | ID               | Required argument       | Effect                                                                                         |
+|----------------|------------------|-------------------------|------------------------------------------------------------------------------------------------|
+| Send Message   | `send-message`   | `do_channel`            | Posts a Components V2 panel in that channel describing what fired.                             |
+| Send DM        | `send-dm`        | `do_member`             | DMs that member the same kind of panel.                                                        |
+| Send Text      | `send-text`      | `do_channel`, `do_text` | Posts your custom text in that channel.                                                        |
+| Reply          | `reply`          | `do_text`               | Replies to the triggering message. Message send/edit triggers only.                            |
+| Add Reaction   | `add-reaction`   | `do_emoji`              | Reacts to the triggering message. Message send/edit triggers only.                             |
+| Delete Message | `delete-message` | none                    | Deletes the triggering message. Message send/edit triggers only.                               |
+| Add Role       | `add-role`       | `do_role`               | Gives that role to the member who fired the trigger.                                           |
+| Remove Role    | `remove-role`    | `do_role`               | Removes that role from the member who fired the trigger.                                       |
+| Move to VC     | `move-to-vc`     | `do_vc`                 | Moves the member who fired the trigger into that voice channel. They must already be in voice. |
+| Kick Member    | `kick-member`    | none                    | Kicks the member who fired the trigger.                                                        |
+| Timeout Member | `timeout-member` | `do_text`               | Times out the member who fired the trigger. Duration like `10m` (max 28d).                     |
+| Ban Member     | `ban-member`     | none                    | Bans the member who fired the trigger.                                                         |
 
 Bots never fire triggers. If a do targets a member, that member's user-configure lists are checked first.
 

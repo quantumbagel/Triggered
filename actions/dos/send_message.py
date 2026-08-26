@@ -2,6 +2,9 @@ import discord
 
 from actions.dos.do import Do
 from backend import get_trigger_do
+from backend.ui import runtime
+from backend.ui.message import send_view
+from backend.ui.panels import build_rule_fired_view
 
 
 class SendMessageDo(Do):
@@ -13,28 +16,32 @@ class SendMessageDo(Do):
 
     async def execute(data: dict, client, guild: discord.Guild, author: discord.Member, other_discord_data=None):
         trigger_requirements, do_requirements = get_trigger_do.get_trigger_do()
-        embed = discord.Embed(title=f"Rule triggered by {author.global_name} (@{author.name})",
-                              color=discord.Color.from_rgb(255, 87, 51))
-        embed.set_thumbnail(url=author.avatar)
-        embed.set_author(name=f"Server: {guild.name}", icon_url=guild.icon)
-        embed.add_field(name="Event:",
-                        value=await trigger_requirements[data["trigger"]["trigger_action_name"]]['class'].human(
-                            data["trigger"]))
-        embed.add_field(name="Triggered:",
-                        value=data["tracker"].get(str(author.id), 1))
+        event_text = await trigger_requirements[data["trigger"]["trigger_action_name"]]['class'].human(
+            data["trigger"])
         actions = ''
         for action in data['dos']:
             actions += (":arrow_right:   " +
                         await do_requirements[action["do_action_name"]]['class']
                         .human(action, data["trigger"]["trigger_action_name"]) + '\n')
         actions = actions[:-1]
-        embed.add_field(name="Actions taken:", value=actions, inline=False)
+        message_line = None
         if type(other_discord_data) is discord.Message:
-            embed.add_field(name="Message content:",
-                            value=f"[{other_discord_data.content}]({other_discord_data.jump_url})")
-        embed.set_footer(icon_url="https://avatars.githubusercontent.com/u/58365715",
-                         text="Made with ❤ by @quantumbagel")
-        await data['do']['do_channel'].send(embed=embed)
+            message_line = f"[{other_discord_data.content}]({other_discord_data.jump_url})"
+        avatar_url = None
+        if getattr(author, "display_avatar", None) is not None:
+            avatar_url = str(author.display_avatar.url)
+        view = build_rule_fired_view(
+            emoji=runtime.emoji,
+            author_name=author.global_name or author.name,
+            author_handle=author.name,
+            guild_name=guild.name,
+            event_text=event_text,
+            times_triggered=data["tracker"].get(str(author.id), 1),
+            actions=actions,
+            message_line=message_line,
+            avatar_url=avatar_url,
+        )
+        await send_view(data['do']['do_channel'], view)
 
     def dropdown_name(self):
         return "Send Message"

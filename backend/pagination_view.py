@@ -1,6 +1,13 @@
-import discord
-import math
 import logging
+import math
+
+import discord
+
+from backend.ui import runtime
+from backend.ui.compiler import Compiler
+from backend.ui.emoji import EmojiResolver
+from backend.ui.message import edit_view, send_view
+from backend.ui.panels import build_list_page_view
 
 
 def page_slice(data: list, current_page: int, sep: int) -> list:
@@ -11,29 +18,86 @@ def page_slice(data: list, current_page: int, sep: int) -> list:
     return data[from_item:from_item + sep]
 
 
-class PaginationView(discord.ui.View):
-    current_page: int = 1
-    sep: int = 3
-
-    def __init__(self, timeout=None, title="", data: list[dict[str, str]] = None, author: discord.Member = None,
-                 embed_color: discord.Color = None):
+class PaginationView:
+    def __init__(
+        self,
+        timeout=None,
+        title="",
+        data: list[dict[str, str]] | None = None,
+        author: discord.Member = None,
+        embed_color: discord.Color = None,
+        compiler: Compiler | None = None,
+        emoji: EmojiResolver | None = None,
+        sep: int = 3,
+    ):
         """
-        Initialize a PaginationView
-        :param timeout: the timeout (honestly not sure lol)
-        :param title: The title of the View
-        :param embed_color: The color of the embed
-        :param data: The data to store
-        :param author: the author of the message.
+        Paginate trigger list rows as a Components V2 layout.
         """
-        super().__init__(timeout=timeout)
         self.current_page = 1
-        self.sep = 3
+        self.sep = sep
         self.title = title
         self.author = author
-        self.data = data
+        self.data = data or []
         self.message = None
         self.embed_color = embed_color
+        self.compiler = compiler
+        self.emoji = emoji
         self.logger = logging.getLogger("triggered").getChild("pview")
+
+    def _compiler(self) -> Compiler:
+        if self.compiler is not None:
+            return self.compiler
+        if runtime.compiler is None:
+            raise RuntimeError("UI compiler is not configured")
+        return runtime.compiler
+
+    def _emoji(self) -> EmojiResolver:
+        if self.emoji is not None:
+            return self.emoji
+        if runtime.emoji is None:
+            raise RuntimeError("UI emoji resolver is not configured")
+        return runtime.emoji
+
+    def _pages(self) -> int:
+        if not self.data:
+            return 1
+        return max(1, math.ceil(len(self.data) / self.sep))
+
+    def get_current_page_data(self) -> list[dict[str, str]]:
+        return page_slice(self.data, self.current_page, self.sep)
+
+    def _layout(self):
+        return build_list_page_view(
+            emoji=self._emoji(),
+            title=self.title,
+            page=self.current_page,
+            pages=self._pages(),
+            items=self.get_current_page_data(),
+        )
+
+    async def _on_action(
+        self,
+        interaction: discord.Interaction,
+        source: str,
+        payload: dict | None,
+        values: list[str] | None,
+    ) -> None:
+        if self.author is not None and interaction.user.id != self.author.id:
+            await interaction.response.defer()
+            return
+        pages = self._pages()
+        if source == "first":
+            self.current_page = 1
+        elif source == "prev":
+            self.current_page = max(1, self.current_page - 1)
+        elif source == "next":
+            self.current_page = min(pages, self.current_page + 1)
+        elif source == "last":
+            self.current_page = pages
+        await edit_view(
+            interaction, self._layout(), on_action=self._on_action, compiler=self._compiler()
+        )
+        self.logger.getChild("update_message").debug("Successfully updated existing interaction!")
 
     async def send(self, ctx: discord.Interaction):
         """
@@ -42,101 +106,10 @@ class PaginationView(discord.ui.View):
         :return:
         """
         try:
-            await ctx.response.send_message(view=self)
+            self.message = await send_view(
+                ctx, self._layout(), on_action=self._on_action, compiler=self._compiler()
+            )
         except discord.NotFound:
             (self.logger.getChild("send")
              .error("Unknown interaction! This is probably due to the bot just coming back online."))
-            return  # Fail the interaction
-        self.message = await ctx.original_response()
-        await self.update_message(self.data[:self.sep])
-
-    def create_embed(self, data):
-        """
-        Generate the embed with per-page data
-        :param data: the data to parse
-        :return: the embed
-        """
-        embed = discord.Embed(title=f"{self.title} (page {self.current_page}/{math.ceil(len(self.data) / self.sep)})",
-                              color=self.embed_color)
-
-        for item in data:
-            embed.add_field(name=item['title'], value=item['subtitle'], inline=False)
-            embed.add_field(name="Dos", value=item['dos_subtitle'])
-            embed.add_field(name="Trigger Name", value=item['trigger_type'])
-        embed.set_footer(text="Made with ❤ by @quantumbagel",
-                         icon_url="https://avatars.githubusercontent.com/u/58365715")
-        return embed
-
-    async def update_message(self, data):
-        """
-        Update the message (on button click)
-        :param data: the data
-        :return: none
-        """
-        self.update_buttons()
-        await self.message.edit(embed=self.create_embed(data), view=self)
-        self.logger.getChild("update_message").debug("Successfully updated existing interaction!")
-
-    def update_buttons(self):
-        """
-        Update the color and usability of the buttons depending on the current page.
-        :return: none
-        """
-        if self.current_page == 1:
-            self.first_page_button.disabled = True
-            self.prev_button.disabled = True
-            self.first_page_button.style = discord.ButtonStyle.gray
-            self.prev_button.style = discord.ButtonStyle.gray
-        else:
-            self.first_page_button.disabled = False
-            self.prev_button.disabled = False
-            self.first_page_button.style = discord.ButtonStyle.green
-            self.prev_button.style = discord.ButtonStyle.primary
-
-        if self.current_page == math.ceil(len(self.data) / self.sep):
-            self.next_button.disabled = True
-            self.last_page_button.disabled = True
-            self.last_page_button.style = discord.ButtonStyle.gray
-            self.next_button.style = discord.ButtonStyle.gray
-        else:
-            self.next_button.disabled = False
-            self.last_page_button.disabled = False
-            self.last_page_button.style = discord.ButtonStyle.green
-            self.next_button.style = discord.ButtonStyle.primary
-
-    def get_current_page_data(self):
-        return page_slice(self.data, self.current_page, self.sep)
-
-    # These are the buttons and what they do.
-
-    @discord.ui.button(emoji="⏮",
-                       style=discord.ButtonStyle.green)
-    async def first_page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id == self.author.id:
-            await interaction.response.defer()
-            self.current_page = 1
-            await self.update_message(self.get_current_page_data())
-
-    @discord.ui.button(emoji="⬅",
-                       style=discord.ButtonStyle.primary)
-    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id == self.author.id:
-            await interaction.response.defer()
-            self.current_page -= 1
-            await self.update_message(self.get_current_page_data())
-
-    @discord.ui.button(emoji="➡",
-                       style=discord.ButtonStyle.primary)
-    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id == self.author.id:
-            await interaction.response.defer()
-            self.current_page += 1
-            await self.update_message(self.get_current_page_data())
-
-    @discord.ui.button(emoji="⏭",
-                       style=discord.ButtonStyle.green)
-    async def last_page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id == self.author.id:
-            await interaction.response.defer()
-            self.current_page = math.ceil(len(self.data) / self.sep)
-            await self.update_message(self.get_current_page_data())
+            return

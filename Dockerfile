@@ -10,7 +10,8 @@ COPY pyproject.toml README.md ./
 COPY bot.py ./
 COPY actions ./actions
 COPY backend ./backend
-COPY configuration/requirements.json configuration/config.example.json ./configuration/
+COPY configuration/requirements.json configuration/config.example.json configuration/emoji.json ./configuration/
+COPY assets ./assets
 COPY docker/entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh \
