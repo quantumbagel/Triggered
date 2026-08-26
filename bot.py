@@ -12,6 +12,7 @@ from pymongo import MongoClient
 
 from backend import (discord_pickler, get_trigger_do, git_tools, pagination_view, triggered_formatter,
                      validate_arguments, validate_configuration)
+from backend.autocomplete import filter_autocomplete
 from backend.duration import parse_duration_seconds
 from backend.permissions import item_is_denied, normalize_mode
 
@@ -74,17 +75,15 @@ if DO_REQUIREMENTS is None:  # Error has occurred, print and exit
     log.critical(f"Invalid data ({TRIGGER_REQUIREMENTS})")
     sys.exit(1)
 
-# Generate TRIGGER_OPTIONS
-TRIGGER_OPTIONS = []
-for defined_trigger in TRIGGER_REQUIREMENTS.keys():
-    dropdown_key = TRIGGER_REQUIREMENTS[defined_trigger]['class']().dropdown_name()
-    TRIGGER_OPTIONS.append(app_commands.Choice(name=dropdown_key, value=defined_trigger))
-
-# Generate DO_OPTIONS
-DO_OPTIONS = []
-for defined_do in DO_REQUIREMENTS.keys():
-    dropdown_key = DO_REQUIREMENTS[defined_do]['class']().dropdown_name()
-    DO_OPTIONS.append(app_commands.Choice(name=dropdown_key, value=defined_do))
+# Visible name + registry id for autocomplete (avoids Discord's 25-choice cap)
+TRIGGER_CHOICE_ITEMS = [
+    (TRIGGER_REQUIREMENTS[action_id]["class"]().dropdown_name(), action_id)
+    for action_id in TRIGGER_REQUIREMENTS
+]
+DO_CHOICE_ITEMS = [
+    (DO_REQUIREMENTS[action_id]["class"]().dropdown_name(), action_id)
+    for action_id in DO_REQUIREMENTS
+]
 log.debug("Successfully built do/trigger options/requirements!")
 client = discord.Client(intents=discord.Intents.all())
 tree = app_commands.CommandTree(client)  # Build command tree
@@ -251,11 +250,44 @@ async def check_permissions(roles: list, channels: list,
     return True, "", ""
 
 
+def _choices_from_items(current: str, items: list[tuple[str, str]]) -> list[app_commands.Choice[str]]:
+    return [app_commands.Choice(name=label, value=value)
+            for label, value in filter_autocomplete(current, items)]
+
+
+async def autocomplete_trigger_type(_ctx: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    return _choices_from_items(current, TRIGGER_CHOICE_ITEMS)
+
+
+async def autocomplete_do_type(_ctx: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    return _choices_from_items(current, DO_CHOICE_ITEMS)
+
+
+async def autocomplete_trigger_name(ctx: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    if ctx.guild is None:
+        return []
+    names = [(name, name) for _col, name in iter_guild_collections(ctx.guild.id)]
+    return _choices_from_items(current, names)
+
+
+async def autocomplete_do_name(ctx: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    if ctx.guild is None:
+        return []
+    trigger_name = getattr(ctx.namespace, "trigger_name", None)
+    if not trigger_name:
+        return []
+    docs = watching_commands_access[str(ctx.guild.id)][trigger_name].find(
+        {"type": "do"}, {"_id": False, "do_name": True})
+    names = [(doc["do_name"], doc["do_name"]) for doc in docs if doc.get("do_name")]
+    return _choices_from_items(current, names)
+
+
 @triggered.command(name="new", description="Create a trigger."
                                            " All optional arguments are dependent"
                                            " on the type of trigger that you choose.")
-@app_commands.choices(trigger=TRIGGER_OPTIONS)
-async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[str], description: str = None,
+@app_commands.autocomplete(trigger=autocomplete_trigger_type)
+@app_commands.describe(trigger="Trigger type. Type to search — pick one from autocomplete.")
+async def new(ctx: discord.Interaction, name: str, trigger: str, description: str = None,
               trigger_role: discord.Role = None, trigger_member: discord.Member = None, trigger_text: str = None,
               trigger_emoji: str = None, trigger_vc: discord.VoiceChannel = None,
               trigger_channel: discord.TextChannel = None) -> None:
@@ -282,6 +314,12 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
     if not name or not name.strip():
         embed = generate_simple_embed("Trigger name can't be empty!",
                                       "Please provide a name for this trigger.")
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    if trigger not in TRIGGER_REQUIREMENTS:
+        embed = generate_simple_embed(f"Unknown trigger \"{trigger}\"!",
+                                      "Pick a trigger type from the autocomplete list. Type to search by name or id.")
         await ctx.response.send_message(embed=embed, ephemeral=True)
         return
 
@@ -316,11 +354,11 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
     # Encode variables
     variables = {"trigger_role": trigger_role, "trigger_member": trigger_member,
                  "trigger_text": trigger_text, "trigger_emoji": trigger_emoji, "trigger_vc": trigger_vc,
-                 "type": "trigger", "trigger_action_name": trigger.value, "trigger_channel": trigger_channel,
+                 "type": "trigger", "trigger_action_name": trigger, "trigger_channel": trigger_channel,
                  "trigger_description": description}
 
     # Ensure validity
-    allowed, res = validate_arguments.is_trigger_valid(variables, trigger.value, TRIGGER_REQUIREMENTS)
+    allowed, res = validate_arguments.is_trigger_valid(variables, trigger, TRIGGER_REQUIREMENTS)
     if not allowed:
         f_log.error(f"Failed to validate TRIGGER action (reason=\"{res}\")")
         embed = generate_simple_embed("Invalid arguments!", f"Reason: \"{res}\"")
@@ -355,8 +393,10 @@ async def new(ctx: discord.Interaction, name: str, trigger: app_commands.Choice[
 
 @triggered.command(name="add", description="Add a do to a Trigger."
                                            " All optional arguments are dependent on the type of do that you choose.")
-@app_commands.choices(do=DO_OPTIONS)
-async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choice[str], do_name: str,
+@app_commands.autocomplete(do=autocomplete_do_type, trigger_name=autocomplete_trigger_name)
+@app_commands.describe(do="Action type. Type to search — pick one from autocomplete.",
+                       trigger_name="Existing trigger to attach this do to.")
+async def add(ctx: discord.Interaction, trigger_name: str, do: str, do_name: str,
               description: str = None, do_member: discord.Member = None,
               do_channel: discord.TextChannel = None, do_vc: discord.VoiceChannel = None, do_text: str = None,
               do_role: discord.Role = None, do_emoji: str = None) -> None:
@@ -385,6 +425,12 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
     if not trigger_name or not trigger_name.strip() or not do_name or not do_name.strip():
         embed = generate_simple_embed("Trigger name and do name are required!",
                                       "Please provide both `trigger_name` and `do_name`.")
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    if do not in DO_REQUIREMENTS:
+        embed = generate_simple_embed(f"Unknown do \"{do}\"!",
+                                      "Pick a do type from the autocomplete list. Type to search by name or id.")
         await ctx.response.send_message(embed=embed, ephemeral=True)
         return
 
@@ -418,7 +464,7 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
             return
 
     # Compile the variables
-    variables = {"do_member": do_member, "do_channel": do_channel, "do_action_name": do.value,
+    variables = {"do_member": do_member, "do_channel": do_channel, "do_action_name": do,
                  "type": "do", "do_vc": do_vc, "do_text": do_text, "do_role": do_role,
                  "do_emoji": do_emoji, "do_name": do_name, "do_description": description}
 
@@ -451,7 +497,7 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
             n_var = {}
             for variable in variables.keys():
                 n_var[variable] = await discord_pickler.encode_object(variables[variable])
-            allowed, res = validate_arguments.is_do_valid(variables, do.value, DO_REQUIREMENTS,
+            allowed, res = validate_arguments.is_do_valid(variables, do, DO_REQUIREMENTS,
                                                          trigger_type)
             if not allowed:
                 f_log.error(f"Failed to validate DO action (reason=\"{res}\")")
@@ -487,6 +533,7 @@ async def add(ctx: discord.Interaction, trigger_name: str, do: app_commands.Choi
 @triggered.command(description="Delete a selected do or trigger. Some arguments are dependent on others.")
 @app_commands.choices(to_delete=[app_commands.Choice(name="Trigger", value="trigger"),
                                  app_commands.Choice(name="Do", value="do")])
+@app_commands.autocomplete(trigger_name=autocomplete_trigger_name, do_name=autocomplete_do_name)
 async def delete(ctx: discord.Interaction, to_delete: app_commands.Choice[str],
                  trigger_name: str, do_name: str = None) -> None:
     """
@@ -561,6 +608,7 @@ async def delete(ctx: discord.Interaction, to_delete: app_commands.Choice[str],
 @app_commands.choices(mode=[app_commands.Choice(name="Search", value="search"),
                             app_commands.Choice(name="View", value="view"),
                             app_commands.Choice(name="List all", value="view-all")])
+@app_commands.autocomplete(query=autocomplete_trigger_name)
 async def view(ctx: discord.Interaction, mode: app_commands.Choice[str], query: str = None) -> None:
     """
     View or search for the server's commands, and use PaginationView to send them.

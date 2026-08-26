@@ -9,6 +9,7 @@ Triggered is a self-hostable Discord **if-this-then-that** bot. You create a **t
 ## Features
 
 - Slash-command workflow for creating, attaching, viewing, and deleting automations
+- Autocomplete for trigger/do types and existing names (type to search; not limited to Discord's 25-choice dropdown)
 - Built-in triggers for messages, edits, deletes, reactions, voice, roles, nicknames, boosts, and a timed clock
 - Built-in dos for messages, DMs, replies, reactions, roles, voice moves, and moderation
 - Server-wide permission role plus channel/role white/blacklists
@@ -86,8 +87,8 @@ Slash commands only work in guilds, not DMs.
 
 | Command | What it does |
 | --- | --- |
-| `/triggered new` | Create a trigger. Required: `name`, `trigger`. Optional: `description` plus the argument that trigger needs (`trigger_text`, `trigger_role`, `trigger_member`, `trigger_emoji`, `trigger_vc`, `trigger_channel`, …). Durations use seconds or shorthand (`60s`, `5m`, `1h`, `1d`). |
-| `/triggered add` | Attach a do to an existing trigger. Required: `trigger_name`, `do`, `do_name`. Optional: `description` plus the argument that do needs (`do_channel`, `do_member`, `do_role`, `do_emoji`, `do_text`, `do_vc`, …). |
+| `/triggered new` | Create a trigger. Required: `name`, `trigger`. Type in `trigger` to search types (autocomplete, not a 25-item dropdown). Optional: `description` plus the argument that trigger needs (`trigger_text`, `trigger_role`, `trigger_member`, `trigger_emoji`, `trigger_vc`, `trigger_channel`, …). Durations use seconds or shorthand (`60s`, `5m`, `1h`, `1d`). |
+| `/triggered add` | Attach a do to an existing trigger. Required: `trigger_name`, `do`, `do_name`. Type in `do` and `trigger_name` to search. Optional: `description` plus the argument that do needs (`do_channel`, `do_member`, `do_role`, `do_emoji`, `do_text`, `do_vc`, …). |
 | `/triggered delete` | Delete a trigger (and its dos) or a single do. |
 | `/triggered view` | `List all`, `View` one trigger by name, or `Search` by name / author / type. |
 | `/triggered server-configure` | Guild permission settings. Requires Discord Administrator. |
@@ -245,6 +246,7 @@ To use a local `configuration/config.json` instead, bind-mount it onto `/app/con
 ## Known limits
 
 - Slash commands do not work in DMs.
+- Autocomplete still shows at most 25 matches at a time; type more of the name or id to narrow the list.
 - Scheduled triggers cannot run more often than every 15 seconds.
 - The hosted invite is a small personal bot, not a high-availability service. Self-host if you need it reliable.
 - `config.json` is required at `configuration/config.json` (copy it from `configuration/config.example.json`). Keep that file private — it is gitignored. Docker can skip a local config file and use `TRIGGERED_*` environment variables instead.
